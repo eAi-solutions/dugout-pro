@@ -12,8 +12,6 @@ import {
   Dimensions,
   Animated
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { baseballDrills, Drill, PracticePlan } from './Data/Models/baseballDrills';
 import BaseballField from './Field/BaseballField';
 
@@ -31,7 +29,6 @@ export default function App() {
   
   const [drills, setDrills] = useState<Drill[]>(baseballDrills);
   const [practicePlans, setPracticePlans] = useState<PracticePlan[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [selectedDrills, setSelectedDrills] = useState<Set<string>>(new Set());
   const [selectedDrillsOrder, setSelectedDrillsOrder] = useState<string[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -62,57 +59,6 @@ export default function App() {
   const [showPlanDetails, setShowPlanDetails] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<PracticePlan | null>(null);
   const [editingNotesInDetail, setEditingNotesInDetail] = useState(false);
-
-  // Storage functions
-  const savePracticePlans = async (plans: PracticePlan[]) => {
-    try {
-      await AsyncStorage.setItem('practicePlans', JSON.stringify(plans));
-    } catch (error) {
-      console.error('Error saving practice plans:', error);
-    }
-  };
-
-  const loadPracticePlans = async () => {
-    try {
-      const stored = await AsyncStorage.getItem('practicePlans');
-      if (stored) {
-        const plans = JSON.parse(stored);
-        setPracticePlans(plans);
-      }
-    } catch (error) {
-      console.error('Error loading practice plans:', error);
-    }
-  };
-
-  const saveCustomDrills = async (customDrills: Drill[]) => {
-    try {
-      await AsyncStorage.setItem('customDrills', JSON.stringify(customDrills));
-    } catch (error) {
-      console.error('Error saving custom drills:', error);
-    }
-  };
-
-  const loadCustomDrills = async () => {
-    try {
-      const stored = await AsyncStorage.getItem('customDrills');
-      if (stored) {
-        const customDrills = JSON.parse(stored);
-        // Merge custom drills with default drills
-        setDrills([...baseballDrills, ...customDrills]);
-      }
-    } catch (error) {
-      console.error('Error loading custom drills:', error);
-    }
-  };
-
-  // Load data on app start
-  useEffect(() => {
-    const loadData = async () => {
-      await Promise.all([loadPracticePlans(), loadCustomDrills()]);
-      setIsLoading(false);
-    };
-    loadData();
-  }, []);
 
   // Welcome screen animation
   useEffect(() => {
@@ -200,11 +146,7 @@ export default function App() {
       isCustom: true
     };
 
-    const updatedDrills = [...drills, customDrill];
-    setDrills(updatedDrills);
-    // Save only custom drills to storage
-    const customDrills = updatedDrills.filter(drill => drill.isCustom);
-    saveCustomDrills(customDrills);
+    setDrills([...drills, customDrill]);
     setNewDrill({ title: '', category: '', description: '' });
     setShowAddForm(false);
     Alert.alert('Success', 'Custom drill added successfully!');
@@ -253,9 +195,7 @@ export default function App() {
       createdAt: new Date()
     };
 
-    const updatedPlans = [...practicePlans, newPlan];
-    setPracticePlans(updatedPlans);
-    savePracticePlans(updatedPlans);
+    setPracticePlans([...practicePlans, newPlan]);
     setSelectedDrills(new Set());
     setSelectedDrillsOrder([]);
     setNewPlanName('');
@@ -283,9 +223,7 @@ export default function App() {
           text: 'Delete',
           style: 'destructive',
           onPress: () => {
-            const updatedPlans = practicePlans.filter(plan => plan.id !== planId);
-            setPracticePlans(updatedPlans);
-            savePracticePlans(updatedPlans);
+            setPracticePlans(prev => prev.filter(plan => plan.id !== planId));
             Alert.alert('Success', 'Practice plan deleted successfully!');
           },
         },
@@ -305,13 +243,13 @@ export default function App() {
 
   const handleSaveEdit = () => {
     if (editingPlanId) {
-      const updatedPlans = practicePlans.map(plan => 
-        plan.id === editingPlanId 
-          ? { ...plan, drills: editingDrills }
-          : plan
+      setPracticePlans(prev => 
+        prev.map(plan => 
+          plan.id === editingPlanId 
+            ? { ...plan, drills: editingDrills }
+            : plan
+        )
       );
-      setPracticePlans(updatedPlans);
-      savePracticePlans(updatedPlans);
       setEditingPlanId(null);
       setEditingDrills([]);
       Alert.alert('Success', 'Practice plan updated successfully!');
@@ -340,13 +278,13 @@ export default function App() {
   };
 
   const handleSaveNotes = (planId: string) => {
-    const updatedPlans = practicePlans.map(plan => 
-      plan.id === planId 
-        ? { ...plan, notes: editingNotes }
-        : plan
+    setPracticePlans(prev => 
+      prev.map(plan => 
+        plan.id === planId 
+          ? { ...plan, notes: editingNotes }
+          : plan
+      )
     );
-    setPracticePlans(updatedPlans);
-    savePracticePlans(updatedPlans);
     setShowNotesEdit(null);
     setEditingNotes('');
     Alert.alert('Success', 'Notes updated successfully!');
@@ -378,13 +316,13 @@ export default function App() {
 
   const handleSaveNotesInDetail = () => {
     if (selectedPlan) {
-      const updatedPlans = practicePlans.map(plan => 
-        plan.id === selectedPlan.id 
-          ? { ...plan, notes: editingNotes }
-          : plan
+      setPracticePlans(prev => 
+        prev.map(plan => 
+          plan.id === selectedPlan.id 
+            ? { ...plan, notes: editingNotes }
+            : plan
+        )
       );
-      setPracticePlans(updatedPlans);
-      savePracticePlans(updatedPlans);
       setSelectedPlan(prev => prev ? { ...prev, notes: editingNotes } : null);
       setEditingNotesInDetail(false);
       setEditingNotes('');
@@ -540,7 +478,7 @@ export default function App() {
     if (!selectedPlan) return null;
 
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { paddingTop: statusBarHeight, paddingBottom: bottomPadding }]}>
         <StatusBar style="auto" />
         
         <View style={styles.header}>
@@ -806,7 +744,7 @@ export default function App() {
 
   // Welcome Screen Component
   const renderWelcomeScreen = () => (
-    <View style={styles.welcomeContainer}>
+    <View style={[styles.welcomeContainer, { paddingTop: statusBarHeight, paddingBottom: bottomPadding }]}>
       <StatusBar style="light" />
       <Animated.View 
         style={[
@@ -856,7 +794,7 @@ export default function App() {
 
   // Menu Screen Component
   const renderMenuScreen = () => (
-    <View style={styles.menuContainer}>
+    <View style={[styles.menuContainer, { paddingTop: statusBarHeight, paddingBottom: bottomPadding }]}>
       <StatusBar style="light" />
       
       {/* Header */}
@@ -919,58 +857,26 @@ export default function App() {
     </View>
   );
 
-  // Show loading screen while data is being loaded
-  if (isLoading) {
-    return (
-      <SafeAreaProvider>
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center' }}>
-          <Text style={{ color: '#FFFFFF', fontSize: 18, marginBottom: 10 }}>Loading...</Text>
-          <Text style={{ color: '#9CA3AF', fontSize: 14 }}>Loading your practice plans</Text>
-        </SafeAreaView>
-      </SafeAreaProvider>
-    );
-  }
-
   if (showWelcome) {
-    return (
-      <SafeAreaProvider>
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#1a1a1a' }}>
-          {renderWelcomeScreen()}
-        </SafeAreaView>
-      </SafeAreaProvider>
-    );
+    return renderWelcomeScreen();
   }
 
   if (showMenu) {
-    return (
-      <SafeAreaProvider>
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#1a1a1a' }}>
-          {renderMenuScreen()}
-        </SafeAreaView>
-      </SafeAreaProvider>
-    );
+    return renderMenuScreen();
   }
 
   if (showFieldDiagram) {
-    return (
-      <SafeAreaProvider>
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#1a1a1a' }}>
-          <BaseballField onBack={() => {
-            setShowFieldDiagram(false);
-            setShowMenu(true);
-          }} />
-        </SafeAreaView>
-      </SafeAreaProvider>
-    );
+    return <BaseballField onBack={() => {
+      setShowFieldDiagram(false);
+      setShowMenu(true);
+    }} />;
   }
 
   // Practice Planning Screen
   if (showPracticePlanning) {
     return (
-      <SafeAreaProvider>
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#1a1a1a' }}>
-          <View style={styles.container}>
-            <StatusBar style="auto" />
+      <View style={[styles.container, { paddingTop: statusBarHeight, paddingBottom: bottomPadding }]}>
+        <StatusBar style="auto" />
         
         <View style={styles.header}>
           <TouchableOpacity 
@@ -1047,9 +953,7 @@ export default function App() {
           </View>
         </>
       )}
-          </View>
-        </SafeAreaView>
-      </SafeAreaProvider>
+      </View>
     );
   }
   
@@ -1201,7 +1105,15 @@ const styles = StyleSheet.create({
   cancelButton: {
     backgroundColor: '#95a5a6',
   },
+  saveButton: {
+    backgroundColor: '#27ae60',
+  },
   cancelButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  saveButtonText: {
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',

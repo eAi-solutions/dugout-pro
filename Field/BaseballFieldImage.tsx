@@ -8,7 +8,7 @@ export default function BaseballFieldImage() {
   return (
     <View style={styles.container}>
       <Image
-        source={require('./assets/baseball-field.png')}
+        source={require('../assets/baseball-field.png')}
         style={[styles.fieldImage, { width, height }]}
         resizeMode="contain"
       />
