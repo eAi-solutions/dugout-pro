@@ -81,6 +81,7 @@ export default function App() {
       }
     } catch (error) {
       console.error('Error loading practice plans:', error);
+      // Continue without stored plans
     }
   };
 
@@ -102,14 +103,25 @@ export default function App() {
       }
     } catch (error) {
       console.error('Error loading custom drills:', error);
+      // Continue with default drills only
     }
   };
 
   // Load data on app start
   useEffect(() => {
     const loadData = async () => {
-      await Promise.all([loadPracticePlans(), loadCustomDrills()]);
-      setIsLoading(false);
+      try {
+        // Load data with individual error handling
+        await loadPracticePlans();
+        await loadCustomDrills();
+      } catch (error) {
+        console.error('Error loading data:', error);
+      } finally {
+        // Always set loading to false after a short delay
+        setTimeout(() => {
+          setIsLoading(false);
+        }, 1000);
+      }
     };
     loadData();
   }, []);
@@ -925,7 +937,22 @@ export default function App() {
       <SafeAreaProvider>
         <SafeAreaView style={{ flex: 1, backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center' }}>
           <Text style={{ color: '#FFFFFF', fontSize: 18, marginBottom: 10 }}>Loading...</Text>
-          <Text style={{ color: '#9CA3AF', fontSize: 14 }}>Loading your practice plans</Text>
+          <Text style={{ color: '#9CA3AF', fontSize: 14, textAlign: 'center', marginBottom: 20 }}>
+            Loading your practice plans
+          </Text>
+          <TouchableOpacity 
+            style={{ 
+              backgroundColor: '#34D399', 
+              paddingHorizontal: 20, 
+              paddingVertical: 10, 
+              borderRadius: 8 
+            }}
+            onPress={() => setIsLoading(false)}
+          >
+            <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: 'bold' }}>
+              Skip Loading
+            </Text>
+          </TouchableOpacity>
         </SafeAreaView>
       </SafeAreaProvider>
     );
