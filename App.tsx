@@ -1596,12 +1596,12 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
   },
   appSubtitle: {
-    fontSize: 24,
-    fontWeight: '300',
+    fontSize: 30,
+    fontWeight: 'bold',
     color: '#3498db',
     textAlign: 'center',
     letterSpacing: 1,
-    marginTop: -5,
+    marginTop: 10,
   },
   taglineContainer: {
     alignItems: 'center',
