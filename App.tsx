@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
+// Dugout Pro - Baseball Practice Planning App
 import { 
   StyleSheet, 
   Text, 
