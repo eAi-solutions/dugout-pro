@@ -1,6 +1,18 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, PanResponder, Animated, TouchableOpacity, Platform } from 'react-native';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { View, Text, PanResponder, Animated, TouchableOpacity, Platform, LayoutChangeEvent } from 'react-native';
 import BaseballFieldImage from './BaseballFieldImage';
+
+// Constants for marker sizes and offsets
+const MARKER_SIZES = {
+  PLAYER: { size: 36, offset: 18, borderWidth: { normal: 2, dragging: 3 } },
+  BALL: { size: 24, offset: 12, borderWidth: { normal: 2, dragging: 3 } },
+  RUNNER: { size: 30, offset: 15, borderWidth: { normal: 2, dragging: 3 } },
+} as const;
+
+const Z_INDEX = {
+  NORMAL: 10,
+  DRAGGING: 1000,
+} as const;
 
 // Normalized positions (0.0 to 1.0) - these scale proportionally across all browsers and devices
 // React Native coordinates: (0,0) is top-left, y increases downward
@@ -10,6 +22,56 @@ type PlayerPos = {
   xPercent: number; // 0.0 to 1.0
   yPercent: number; // 0.0 to 1.0
   color: string;
+};
+
+type PlayerPosition = {
+  key: string;
+  label: string;
+  x: number;
+  y: number;
+  color: string;
+};
+
+type RunnerPosition = {
+  id: string;
+  x: number;
+  y: number;
+};
+
+type ContainerLayout = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type DragStart = {
+  x: number;
+  y: number;
+  key: string;
+  isBall: boolean;
+  isRunner: boolean;
+};
+
+// Type guard for HTMLElement
+const isHTMLElement = (node: unknown): node is HTMLElement => {
+  return (
+    typeof node === 'object' &&
+    node !== null &&
+    'getBoundingClientRect' in node &&
+    typeof (node as HTMLElement).getBoundingClientRect === 'function'
+  );
+};
+
+// Safe window access for SSR compatibility
+const getWindowScrollX = (): number => {
+  if (typeof window === 'undefined') return 0;
+  return window.scrollX ?? window.pageXOffset ?? 0;
+};
+
+const getWindowScrollY = (): number => {
+  if (typeof window === 'undefined') return 0;
+  return window.scrollY ?? window.pageYOffset ?? 0;
 };
 
 const BASE_POSITIONS: PlayerPos[] = [
@@ -30,6 +92,19 @@ interface InteractiveFieldProps {
   onReset?: () => void;
 }
 
+// Helper to convert normalized positions to pixel positions
+const convertPositionsToPixels = (fieldSize: number): PlayerPosition[] => {
+  if (fieldSize <= 0) return [];
+  
+  return BASE_POSITIONS.map(pos => ({
+    key: pos.key,
+    label: pos.label,
+    x: fieldSize * pos.xPercent,
+    y: fieldSize * pos.yPercent,
+    color: pos.color,
+  }));
+};
+
 export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   // Use actual rendered container width as single source of truth
   const [fieldSize, setFieldSize] = useState(0);
@@ -37,9 +112,9 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const fieldHeight = fieldSize;
 
   // Store positions in pixels (converted from normalized percentages)
-  const [playerPositions, setPlayerPositions] = useState<Array<{key: string, label: string, x: number, y: number, color: string}>>([]);
+  const [playerPositions, setPlayerPositions] = useState<PlayerPosition[]>([]);
   const [ballPos, setBallPos] = useState({ x: 0, y: 0 });
-  const [runners, setRunners] = useState<Array<{id: string, x: number, y: number}>>([]);
+  const [runners, setRunners] = useState<RunnerPosition[]>([]);
   const [draggedPlayer, setDraggedPlayer] = useState<string | null>(null);
   const [draggedBall, setDraggedBall] = useState(false);
   const [draggedRunner, setDraggedRunner] = useState<string | null>(null);
@@ -47,15 +122,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   // Convert normalized positions to pixels when field size changes
   useEffect(() => {
     if (fieldSize > 0) {
-      setPlayerPositions(
-        BASE_POSITIONS.map(pos => ({
-          key: pos.key,
-          label: pos.label,
-          x: fieldSize * pos.xPercent,
-          y: fieldSize * pos.yPercent,
-          color: pos.color,
-        }))
-      );
+      setPlayerPositions(convertPositionsToPixels(fieldSize));
       setBallPos({ 
         x: fieldSize * BALL_BASE_POS.xPercent, 
         y: fieldSize * BALL_BASE_POS.yPercent 
@@ -63,17 +130,9 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     }
   }, [fieldSize]);
 
-  const resetPositions = () => {
+  const resetPositions = useCallback(() => {
     if (fieldSize > 0) {
-      setPlayerPositions(
-        BASE_POSITIONS.map(pos => ({
-          key: pos.key,
-          label: pos.label,
-          x: fieldSize * pos.xPercent,
-          y: fieldSize * pos.yPercent,
-          color: pos.color,
-        }))
-      );
+      setPlayerPositions(convertPositionsToPixels(fieldSize));
       setBallPos({ 
         x: fieldSize * BALL_BASE_POS.xPercent, 
         y: fieldSize * BALL_BASE_POS.yPercent 
@@ -85,89 +144,123 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     setDraggedRunner(null);
     // Call the parent reset function if provided
     if (onReset) {
-      onReset();
+      try {
+        onReset();
+      } catch (error) {
+        // Log error but don't break the component
+        if (__DEV__) {
+          console.error('Error in onReset callback:', error);
+        }
+      }
     }
-  };
+  }, [fieldSize, onReset]);
 
-  const addRunner = () => {
-    const newRunner = {
-      id: `runner_${Date.now()}`,
+  const addRunner = useCallback(() => {
+    if (fieldSize <= 0) return;
+    
+    const newRunner: RunnerPosition = {
+      id: `runner_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, // More unique ID
       x: fieldSize * 0.85, // Bottom right area
       y: fieldSize * 0.85
     };
     setRunners(prev => [...prev, newRunner]);
-  };
+  }, [fieldSize]);
 
-  const removeRunner = () => {
-    if (runners.length > 0) {
-      setRunners(prev => prev.slice(0, -1)); // Remove the last runner
-    }
-  };
+  const removeRunner = useCallback(() => {
+    setRunners(prev => {
+      if (prev.length > 0) {
+        return prev.slice(0, -1);
+      }
+      return prev;
+    });
+  }, []);
 
   const fieldContainerRef = useRef<View>(null);
   const containerDOMRef = useRef<HTMLElement | null>(null);
-  const [containerLayout, setContainerLayout] = useState<{x: number, y: number, width: number, height: number} | null>(null);
-  const [containerWindowLayout, setContainerWindowLayout] = useState<{x: number, y: number, width: number, height: number} | null>(null);
-  const [dragStart, setDragStart] = useState<{x: number, y: number, key: string, isBall: boolean, isRunner: boolean} | null>(null);
+  const [containerLayout, setContainerLayout] = useState<ContainerLayout | null>(null);
+  const [containerWindowLayout, setContainerWindowLayout] = useState<ContainerLayout | null>(null);
+  const [dragStart, setDragStart] = useState<DragStart | null>(null);
   
   // Helper function to get coordinates relative to container - used by both start and move events
-  const getContainerRelativeCoords = (e: any): { x: number; y: number } => {
-    const nativeEvent = e.nativeEvent || e;
+  const getContainerRelativeCoords = useCallback((e: any): { x: number; y: number } => {
+    const nativeEvent = 'nativeEvent' in e ? e.nativeEvent : e;
     let clientX = 0;
     let clientY = 0;
 
-    if (nativeEvent.touches && nativeEvent.touches[0]) {
-      clientX = nativeEvent.touches[0].clientX;
-      clientY = nativeEvent.touches[0].clientY;
-    } else if (nativeEvent.changedTouches && nativeEvent.changedTouches[0]) {
-      clientX = nativeEvent.changedTouches[0].clientX;
-      clientY = nativeEvent.changedTouches[0].clientY;
-    } else {
-      clientX = nativeEvent.clientX !== undefined
-        ? nativeEvent.clientX
-        : nativeEvent.pageX !== undefined
-        ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0)
-        : 0;
-      clientY = nativeEvent.clientY !== undefined
-        ? nativeEvent.clientY
-        : nativeEvent.pageY !== undefined
-        ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0)
-        : 0;
+    if (nativeEvent && 'touches' in nativeEvent && nativeEvent.touches && nativeEvent.touches[0]) {
+      clientX = nativeEvent.touches[0].clientX ?? 0;
+      clientY = nativeEvent.touches[0].clientY ?? 0;
+    } else if (nativeEvent && 'changedTouches' in nativeEvent && nativeEvent.changedTouches && nativeEvent.changedTouches[0]) {
+      clientX = nativeEvent.changedTouches[0].clientX ?? 0;
+      clientY = nativeEvent.changedTouches[0].clientY ?? 0;
+    } else if (nativeEvent && 'clientX' in nativeEvent) {
+      clientX = nativeEvent.clientX ?? 0;
+      clientY = nativeEvent.clientY ?? 0;
+    } else if (nativeEvent && 'pageX' in nativeEvent) {
+      clientX = nativeEvent.pageX - getWindowScrollX();
+      clientY = nativeEvent.pageY - getWindowScrollY();
     }
 
-    if (containerDOMRef.current && typeof containerDOMRef.current.getBoundingClientRect === 'function') {
-      const rect = containerDOMRef.current.getBoundingClientRect();
-      return {
-        x: clientX - rect.left,
-        y: clientY - rect.top
-      };
-    } else if (fieldContainerRef.current) {
-      // Fallback - but this should be synchronous, so we'll use a workaround
-      let result = { x: 0, y: 0 };
-      fieldContainerRef.current.measureInWindow((winX, winY) => {
-        result = { x: clientX - winX, y: clientY - winY };
-      });
-      return result;
+    // Try to get coordinates relative to container
+    if (containerDOMRef.current && isHTMLElement(containerDOMRef.current)) {
+      try {
+        const rect = containerDOMRef.current.getBoundingClientRect();
+        return {
+          x: Math.max(0, clientX - rect.left),
+          y: Math.max(0, clientY - rect.top)
+        };
+      } catch (error) {
+        if (__DEV__) {
+          console.warn('Error getting container bounds:', error);
+        }
+      }
     }
+    
+    // Fallback: use measureInWindow (async, but better than nothing)
+    if (fieldContainerRef.current) {
+      // Note: measureInWindow is async, so this is a best-effort fallback
+      // The actual measurement happens in onLayout
+      if (containerWindowLayout) {
+        return {
+          x: Math.max(0, clientX - containerWindowLayout.x),
+          y: Math.max(0, clientY - containerWindowLayout.y)
+        };
+      }
+    }
+    
     return { x: 0, y: 0 };
-  };
+  }, [containerWindowLayout]);
 
-  // Callback ref to get direct DOM element access
-  const setContainerRef = (node: View | null) => {
+  // Safe DOM element access with proper type guards
+  const setContainerRef = useCallback((node: View | null) => {
     fieldContainerRef.current = node;
     if (Platform.OS === 'web' && node) {
-      // @ts-ignore
-      containerDOMRef.current = node._nativeNode || 
-        // @ts-ignore
-        node._internalFiberInstanceHandleDEV?.stateNode || 
-        // @ts-ignore
-        (node.nodeType === 1 ? node : null);
+      // Safely access React Native Web's internal properties with type guards
+      // These are implementation details but necessary for cross-browser compatibility
+      try {
+        const nodeAny = node as unknown as {
+          _nativeNode?: HTMLElement;
+          _internalFiberInstanceHandleDEV?: { stateNode?: HTMLElement };
+          nodeType?: number;
+        };
+        
+        if (nodeAny._nativeNode && isHTMLElement(nodeAny._nativeNode)) {
+          containerDOMRef.current = nodeAny._nativeNode;
+        } else if (nodeAny._internalFiberInstanceHandleDEV?.stateNode && isHTMLElement(nodeAny._internalFiberInstanceHandleDEV.stateNode)) {
+          containerDOMRef.current = nodeAny._internalFiberInstanceHandleDEV.stateNode;
+        } else if (nodeAny.nodeType === 1 && isHTMLElement(node)) {
+          containerDOMRef.current = node as unknown as HTMLElement;
+        }
+      } catch (error) {
+        if (__DEV__) {
+          console.warn('Error accessing DOM node:', error);
+        }
+      }
     }
-  };
+  }, []);
 
   // Get container's bounding rect for accurate positioning across all browsers
-  // Use measureInWindow for React Native (works on web too) which gives window-relative coordinates
-  const getContainerBounds = (): {x: number, y: number, width: number, height: number} | null => {
+  const getContainerBounds = useCallback((): ContainerLayout | null => {
     // Prefer window layout from measureInWindow as it's most reliable
     if (containerWindowLayout) {
       return containerWindowLayout;
@@ -179,56 +272,62 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     }
     
     // Last resort: try getBoundingClientRect on web
-    if (Platform.OS === 'web' && fieldContainerRef.current) {
+    if (Platform.OS === 'web' && containerDOMRef.current && isHTMLElement(containerDOMRef.current)) {
       try {
-        // @ts-ignore - accessing DOM element
-        let element = fieldContainerRef.current._nativeNode;
-        if (!element) {
-          // @ts-ignore - alternative access method
-          element = fieldContainerRef.current._internalFiberInstanceHandleDEV?.stateNode;
+        const rect = containerDOMRef.current.getBoundingClientRect();
+        return {
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height
+        };
+      } catch (error) {
+        if (__DEV__) {
+          console.warn('Error getting container bounds:', error);
         }
-        if (!element) {
-          // @ts-ignore - another alternative
-          element = fieldContainerRef.current;
-        }
-        
-        if (element && typeof element.getBoundingClientRect === 'function') {
-          const rect = element.getBoundingClientRect();
-          return {
-            x: rect.left,
-            y: rect.top,
-            width: rect.width,
-            height: rect.height
-          };
-        }
-      } catch (e) {
-        // Silently fail and return null
       }
     }
     
     return null;
-  };
+  }, [containerLayout, containerWindowLayout]);
 
-  const handleStart = (key: string, isBall: boolean, isRunner: boolean, startX: number, startY: number) => {
+  const handleStart = useCallback((key: string, isBall: boolean, isRunner: boolean, startX: number, startY: number) => {
+    // Validate key is a string and not empty
+    if (typeof key !== 'string' || key.length === 0) {
+      if (__DEV__) {
+        console.warn('Invalid key provided to handleStart:', key);
+      }
+      return;
+    }
+
+    // Clamp coordinates to valid range
+    const clampedX = Math.max(0, Math.min(fieldWidth, startX));
+    const clampedY = Math.max(0, Math.min(fieldHeight, startY));
+
     if (isBall) {
       setDraggedBall(true);
-      setDragStart({ x: startX, y: startY, key, isBall: true, isRunner: false });
+      setDragStart({ x: clampedX, y: clampedY, key, isBall: true, isRunner: false });
     } else if (isRunner) {
       setDraggedRunner(key);
-      setDragStart({ x: startX, y: startY, key, isBall: false, isRunner: true });
+      setDragStart({ x: clampedX, y: clampedY, key, isBall: false, isRunner: true });
     } else {
       setDraggedPlayer(key);
-      setDragStart({ x: startX, y: startY, key, isBall: false, isRunner: false });
+      setDragStart({ x: clampedX, y: clampedY, key, isBall: false, isRunner: false });
     }
-  };
+  }, [fieldWidth, fieldHeight]);
 
-  const handleMove = (currentX: number, currentY: number) => {
+  const handleMove = useCallback((currentX: number, currentY: number) => {
     if (!dragStart) return;
+
+    // Validate inputs are numbers
+    if (typeof currentX !== 'number' || typeof currentY !== 'number' || isNaN(currentX) || isNaN(currentY)) {
+      return;
+    }
 
     const deltaX = currentX - dragStart.x;
     const deltaY = currentY - dragStart.y;
 
-    let currentPos;
+    let currentPos: { x: number; y: number } | undefined;
     if (dragStart.isBall) {
       currentPos = ballPos;
     } else if (dragStart.isRunner) {
@@ -239,8 +338,15 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
 
     if (!currentPos) return;
 
-    const newX = Math.max(18, Math.min(fieldWidth - 18, currentPos.x + deltaX));
-    const newY = Math.max(18, Math.min(fieldHeight - 18, currentPos.y + deltaY));
+    // Clamp to field boundaries with marker offset
+    const markerOffset = dragStart.isBall 
+      ? MARKER_SIZES.BALL.offset 
+      : dragStart.isRunner 
+      ? MARKER_SIZES.RUNNER.offset 
+      : MARKER_SIZES.PLAYER.offset;
+
+    const newX = Math.max(markerOffset, Math.min(fieldWidth - markerOffset, currentPos.x + deltaX));
+    const newY = Math.max(markerOffset, Math.min(fieldHeight - markerOffset, currentPos.y + deltaY));
 
     if (dragStart.isBall) {
       setBallPos({ x: newX, y: newY });
@@ -260,44 +366,55 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
 
     // Update drag start position for next move
     setDragStart(prev => prev ? { ...prev, x: currentX, y: currentY } : null);
-  };
+  }, [dragStart, ballPos, runners, playerPositions, fieldWidth, fieldHeight]);
 
-  const handleEnd = () => {
+  const handleEnd = useCallback(() => {
     setDraggedPlayer(null);
     setDraggedBall(false);
     setDraggedRunner(null);
     setDragStart(null);
-  };
+  }, []);
 
-  const createPanResponder = (key: string, isBall: boolean = false, isRunner: boolean = false) => {
-    return PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (evt) => {
-        const { locationX, locationY } = evt.nativeEvent;
-        handleStart(key, isBall, isRunner, locationX, locationY);
-      },
-      onPanResponderMove: (evt, gestureState) => {
-        if (!dragStart) return;
-        const { locationX, locationY } = evt.nativeEvent;
-        handleMove(locationX, locationY);
-      },
-      onPanResponderRelease: handleEnd,
-      onPanResponderTerminate: handleEnd,
-    });
-  };
+  // Memoize PanResponder creation to avoid recreating on every render
+  const panRespondersRef = useRef<Map<string, ReturnType<typeof PanResponder.create>>>(new Map());
+
+  const createPanResponder = useCallback((key: string, isBall: boolean = false, isRunner: boolean = false) => {
+    const cacheKey = `${key}_${isBall}_${isRunner}`;
+    
+    if (!panRespondersRef.current.has(cacheKey)) {
+      panRespondersRef.current.set(cacheKey, PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: (evt) => {
+          const { locationX, locationY } = evt.nativeEvent;
+          handleStart(key, isBall, isRunner, locationX, locationY);
+        },
+        onPanResponderMove: (evt) => {
+          if (!dragStart) return;
+          const { locationX, locationY } = evt.nativeEvent;
+          handleMove(locationX, locationY);
+        },
+        onPanResponderRelease: handleEnd,
+        onPanResponderTerminate: handleEnd,
+      }));
+    }
+    
+    return panRespondersRef.current.get(cacheKey)!;
+  }, [handleStart, handleMove, handleEnd, dragStart]);
 
   // Web mouse/touch handlers - use consistent coordinate system (always relative to container)
-  const getWebHandlers = (key: string, isBall: boolean = false, isRunner: boolean = false) => {
+  const getWebHandlers = useCallback((key: string, isBall: boolean = false, isRunner: boolean = false) => {
     if (Platform.OS !== 'web') return {};
 
     return {
+      // @ts-ignore - React Native Web supports these web event handlers
       onMouseDown: (e: any) => {
         e.preventDefault();
         e.stopPropagation();
         const coords = getContainerRelativeCoords(e);
         handleStart(key, isBall, isRunner, coords.x, coords.y);
       },
+      // @ts-ignore - React Native Web supports these web event handlers
       onTouchStart: (e: any) => {
         e.preventDefault();
         e.stopPropagation();
@@ -305,9 +422,9 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         handleStart(key, isBall, isRunner, coords.x, coords.y);
       },
     };
-  };
+  }, [getContainerRelativeCoords, handleStart]);
 
-  const renderPlayer = (player: any) => {
+  const renderPlayer = useCallback((player: PlayerPosition) => {
     const panResponder = createPanResponder(player.key);
     const isDragging = draggedPlayer === player.key;
     const webHandlers = getWebHandlers(player.key);
@@ -315,17 +432,20 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     return (
       <Animated.View
         key={player.key}
+        accessible={true}
+        accessibilityLabel={`${player.label} player position`}
+        accessibilityRole="button"
         style={{
           position: 'absolute',
-          left: player.x - 18,
-          top: player.y - 18,
-          width: 36,
-          height: 36,
-          borderRadius: 18,
+          left: player.x - MARKER_SIZES.PLAYER.offset,
+          top: player.y - MARKER_SIZES.PLAYER.offset,
+          width: MARKER_SIZES.PLAYER.size,
+          height: MARKER_SIZES.PLAYER.size,
+          borderRadius: MARKER_SIZES.PLAYER.offset,
           backgroundColor: player.color,
           justifyContent: 'center',
           alignItems: 'center',
-          borderWidth: isDragging ? 3 : 2,
+          borderWidth: isDragging ? MARKER_SIZES.PLAYER.borderWidth.dragging : MARKER_SIZES.PLAYER.borderWidth.normal,
           borderColor: '#fff',
           shadowColor: '#000',
           shadowOffset: { width: 0, height: 2 },
@@ -334,33 +454,36 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           elevation: isDragging ? 8 : 5,
           transform: [{ scale: isDragging ? 1.1 : 1 }],
           cursor: Platform.OS === 'web' ? 'pointer' : undefined,
-          zIndex: isDragging ? 1000 : 10,
+          zIndex: isDragging ? Z_INDEX.DRAGGING : Z_INDEX.NORMAL,
         }}
         {...(Platform.OS === 'web' ? webHandlers : panResponder.panHandlers)}
       >
         <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 12 }}>{player.label}</Text>
       </Animated.View>
     );
-  };
+  }, [createPanResponder, draggedPlayer, getWebHandlers]);
 
-  const renderBall = () => {
+  const renderBall = useCallback(() => {
     const panResponder = createPanResponder('ball', true);
     const isDragging = draggedBall;
     const webHandlers = getWebHandlers('ball', true);
     
     return (
       <Animated.View
+        accessible={true}
+        accessibilityLabel="Baseball position"
+        accessibilityRole="button"
         style={{
           position: 'absolute',
-          left: ballPos.x - 12,
-          top: ballPos.y - 12,
-          width: 24,
-          height: 24,
-          borderRadius: 12,
+          left: ballPos.x - MARKER_SIZES.BALL.offset,
+          top: ballPos.y - MARKER_SIZES.BALL.offset,
+          width: MARKER_SIZES.BALL.size,
+          height: MARKER_SIZES.BALL.size,
+          borderRadius: MARKER_SIZES.BALL.offset,
           backgroundColor: '#fff',
           justifyContent: 'center',
           alignItems: 'center',
-          borderWidth: isDragging ? 3 : 2,
+          borderWidth: isDragging ? MARKER_SIZES.BALL.borderWidth.dragging : MARKER_SIZES.BALL.borderWidth.normal,
           borderColor: '#c00',
           shadowColor: '#000',
           shadowOffset: { width: 0, height: 1 },
@@ -369,16 +492,16 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           elevation: isDragging ? 6 : 3,
           transform: [{ scale: isDragging ? 1.2 : 1 }],
           cursor: Platform.OS === 'web' ? 'pointer' : undefined,
-          zIndex: isDragging ? 1000 : 10,
+          zIndex: isDragging ? Z_INDEX.DRAGGING : Z_INDEX.NORMAL,
         }}
         {...(Platform.OS === 'web' ? webHandlers : panResponder.panHandlers)}
       >
         <Text style={{ color: '#c00', fontWeight: 'bold', fontSize: 12 }}>⚾</Text>
       </Animated.View>
     );
-  };
+  }, [ballPos, createPanResponder, draggedBall, getWebHandlers]);
 
-  const renderRunner = (runner: {id: string, x: number, y: number}) => {
+  const renderRunner = useCallback((runner: RunnerPosition) => {
     const panResponder = createPanResponder(runner.id, false, true);
     const isDragging = draggedRunner === runner.id;
     const webHandlers = getWebHandlers(runner.id, false, true);
@@ -386,17 +509,20 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     return (
       <Animated.View
         key={runner.id}
+        accessible={true}
+        accessibilityLabel="Runner position"
+        accessibilityRole="button"
         style={{
           position: 'absolute',
-          left: runner.x - 15,
-          top: runner.y - 15,
-          width: 30,
-          height: 30,
-          borderRadius: 15,
+          left: runner.x - MARKER_SIZES.RUNNER.offset,
+          top: runner.y - MARKER_SIZES.RUNNER.offset,
+          width: MARKER_SIZES.RUNNER.size,
+          height: MARKER_SIZES.RUNNER.size,
+          borderRadius: MARKER_SIZES.RUNNER.offset,
           backgroundColor: '#000000',
           justifyContent: 'center',
           alignItems: 'center',
-          borderWidth: isDragging ? 3 : 2,
+          borderWidth: isDragging ? MARKER_SIZES.RUNNER.borderWidth.dragging : MARKER_SIZES.RUNNER.borderWidth.normal,
           borderColor: '#fff',
           shadowColor: '#000',
           shadowOffset: { width: 0, height: 2 },
@@ -405,7 +531,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           elevation: isDragging ? 8 : 5,
           transform: [{ scale: isDragging ? 1.1 : 1 }],
           cursor: Platform.OS === 'web' ? 'pointer' : undefined,
-          zIndex: isDragging ? 1000 : 10,
+          zIndex: isDragging ? Z_INDEX.DRAGGING : Z_INDEX.NORMAL,
         }}
         {...(Platform.OS === 'web' ? webHandlers : panResponder.panHandlers)}
       >
@@ -419,12 +545,65 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         }}>R</Text>
       </Animated.View>
     );
-  };
+  }, [createPanResponder, draggedRunner, getWebHandlers]);
+
+  const handleLayout = useCallback((e: LayoutChangeEvent) => {
+    const { x, y, width, height } = e.nativeEvent.layout;
+    setContainerLayout({ x, y, width, height });
+    
+    // Set fieldSize to actual rendered width - this is the single source of truth
+    if (width > 0 && width !== fieldSize) {
+      setFieldSize(width);
+    }
+    
+    // Also measure in window for accurate cross-browser coordinates
+    if (fieldContainerRef.current) {
+      fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
+        setContainerWindowLayout({ x: winX, y: winY, width: winWidth, height: winHeight });
+      });
+    }
+  }, [fieldSize]);
+
+  const webEventHandlers = useMemo(() => {
+    if (Platform.OS !== 'web') return {};
+    
+    return {
+      // @ts-ignore - React Native Web supports these web event handlers
+      onMouseMove: (e: any) => {
+        if (dragStart) {
+          const coords = getContainerRelativeCoords(e);
+          handleMove(coords.x, coords.y);
+        }
+      },
+      // @ts-ignore
+      onMouseUp: () => {
+        if (dragStart) handleEnd();
+      },
+      // @ts-ignore
+      onMouseLeave: () => {
+        if (dragStart) handleEnd();
+      },
+      // @ts-ignore
+      onTouchMove: (e: any) => {
+        if (dragStart) {
+          e.preventDefault();
+          const coords = getContainerRelativeCoords(e);
+          handleMove(coords.x, coords.y);
+        }
+      },
+      // @ts-ignore
+      onTouchEnd: () => {
+        if (dragStart) handleEnd();
+      },
+    };
+  }, [dragStart, getContainerRelativeCoords, handleMove, handleEnd]);
 
   return (
     <View style={{ width: '100%', alignItems: 'center', paddingHorizontal: 10 }}>
       <View 
         ref={setContainerRef}
+        accessible={true}
+        accessibilityLabel="Baseball field interactive diagram"
         style={{ 
           width: '100%',
           maxWidth: 900,
@@ -433,49 +612,8 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           marginVertical: 20, 
           position: 'relative',
         }}
-        onLayout={(e) => {
-          const { x, y, width, height } = e.nativeEvent.layout;
-          setContainerLayout({ x, y, width, height });
-          
-          // Set fieldSize to actual rendered width - this is the single source of truth
-          setFieldSize(width);
-          
-          // Also measure in window for accurate cross-browser coordinates
-          if (fieldContainerRef.current) {
-            fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
-              setContainerWindowLayout({ x: winX, y: winY, width: winWidth, height: winHeight });
-            });
-          }
-        }}
-        {...(Platform.OS === 'web' ? {
-          // @ts-ignore - React Native Web supports these
-          onMouseMove: (e: any) => {
-            if (dragStart) {
-              const coords = getContainerRelativeCoords(e);
-              handleMove(coords.x, coords.y);
-            }
-          },
-          // @ts-ignore
-          onMouseUp: () => {
-            if (dragStart) handleEnd();
-          },
-          // @ts-ignore
-          onMouseLeave: () => {
-            if (dragStart) handleEnd();
-          },
-          // @ts-ignore
-          onTouchMove: (e: any) => {
-            if (dragStart) {
-              e.preventDefault();
-              const coords = getContainerRelativeCoords(e);
-              handleMove(coords.x, coords.y);
-            }
-          },
-          // @ts-ignore
-          onTouchEnd: () => {
-            if (dragStart) handleEnd();
-          }
-        } : {})}
+        onLayout={handleLayout}
+        {...(Platform.OS === 'web' ? webEventHandlers : {})}
       >
         {/* Image-based Baseball Field Background */}
         <BaseballFieldImage />
@@ -513,6 +651,9 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         gap: 15
       }}>
         <TouchableOpacity
+          accessible={true}
+          accessibilityLabel="Add runner"
+          accessibilityRole="button"
           style={{ 
             paddingHorizontal: 20, 
             paddingVertical: 10, 
@@ -525,6 +666,9 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         </TouchableOpacity>
         
         <TouchableOpacity
+          accessible={true}
+          accessibilityLabel="Remove runner"
+          accessibilityRole="button"
           style={{ 
             paddingHorizontal: 20, 
             paddingVertical: 10, 
@@ -556,6 +700,9 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
       </View>
 
       <TouchableOpacity
+        accessible={true}
+        accessibilityLabel="Reset all positions"
+        accessibilityRole="button"
         style={{ marginTop: 15, paddingHorizontal: 20, paddingVertical: 10, backgroundColor: '#e74c3c', borderRadius: 8, alignSelf: 'center' }}
         onPress={resetPositions}
       >
