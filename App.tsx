@@ -1619,24 +1619,12 @@ const styles = StyleSheet.create({
     marginBottom: 40,
   },
   baseball: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 8,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 15,
   },
   baseballEmoji: {
-    fontSize: 60,
+    fontSize: 80,
   },
   logoText: {
     alignItems: 'center',
@@ -1714,23 +1702,11 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   menuBaseball: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 10,
   },
   menuBaseballEmoji: {
-    fontSize: 40,
+    fontSize: 60,
   },
   menuTitle: {
     fontSize: 32,
