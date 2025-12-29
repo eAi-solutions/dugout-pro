@@ -31,7 +31,13 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
+.env.local
 .env*.local
+.env.development
+.env.production
+.env.test
+*.env
 
 # Local master files (keep locally only)
 MASTER back pain app build prompt*.md

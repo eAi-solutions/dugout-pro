@@ -16,8 +16,32 @@ import {
 import { baseballDrills, Drill, PracticePlan } from './Data/Models/baseballDrills';
 import BaseballField from './Field/BaseballField';
 
+// Security utility functions
+const sanitizeInput = (input: string, maxLength: number = 1000): string => {
+  if (!input) return '';
+  // Remove potentially dangerous characters and limit length
+  return input
+    .trim()
+    .slice(0, maxLength)
+    .replace(/[<>]/g, '') // Remove angle brackets to prevent XSS
+    .replace(/\0/g, ''); // Remove null bytes
+};
+
+const generateSecureId = (): string => {
+  // Generate a more secure ID using timestamp + random component
+  // This provides better uniqueness than Date.now() alone
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 15);
+  const extraRandom = Math.random().toString(36).substring(2, 9);
+  return `${timestamp}-${random}-${extraRandom}`;
+};
+
+const isDevelopment = __DEV__ || process.env.NODE_ENV === 'development';
+
 export default function App() {
-  console.log('App component rendering...');
+  if (isDevelopment) {
+    console.log('App component rendering...');
+  }
   
   // Wrap Dimensions in try-catch for web compatibility
   let screenHeight = 800;
@@ -26,9 +50,13 @@ export default function App() {
     const dimensions = Dimensions.get('window');
     screenHeight = dimensions.height || 800;
     screenWidth = dimensions.width || 400;
-    console.log('Dimensions:', { screenHeight, screenWidth });
+    if (isDevelopment) {
+      console.log('Dimensions:', { screenHeight, screenWidth });
+    }
   } catch (error) {
-    console.warn('Dimensions API error:', error);
+    if (isDevelopment) {
+      console.warn('Dimensions API error:', error);
+    }
   }
   
   // More conservative safe area calculations
@@ -141,21 +169,22 @@ export default function App() {
     }
   }, [showWelcome]);
 
-  const generateId = () => {
-    return Date.now().toString();
-  };
-
   const handleSaveDrill = () => {
-    if (!newDrill.title.trim() || !newDrill.category.trim() || !newDrill.description.trim()) {
+    // Input validation with length limits
+    const title = sanitizeInput(newDrill.title, 100);
+    const category = sanitizeInput(newDrill.category, 50);
+    const description = sanitizeInput(newDrill.description, 2000);
+    
+    if (!title || !category || !description) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
 
     const customDrill: Drill = {
-      id: generateId(),
-      title: newDrill.title.trim(),
-      category: newDrill.category.trim(),
-      description: newDrill.description.trim(),
+      id: generateSecureId(),
+      title,
+      category,
+      description,
       isCustom: true
     };
 
@@ -185,7 +214,9 @@ export default function App() {
   };
 
   const handleCreatePracticePlan = () => {
-    if (!newPlanName.trim()) {
+    // Sanitize and validate plan name
+    const planName = sanitizeInput(newPlanName, 100);
+    if (!planName) {
       Alert.alert('Error', 'Please enter a practice plan name');
       return;
     }
@@ -201,8 +232,8 @@ export default function App() {
       .filter(drill => drill !== undefined) as Drill[];
     
     const newPlan: PracticePlan = {
-      id: generateId(),
-      name: newPlanName.trim(),
+      id: generateSecureId(),
+      name: planName,
       drills: selectedDrillObjects,
       notes: '',
       createdAt: new Date()
@@ -291,10 +322,12 @@ export default function App() {
   };
 
   const handleSaveNotes = (planId: string) => {
+    // Sanitize notes before saving
+    const sanitizedNotes = sanitizeInput(editingNotes, 5000);
     setPracticePlans(prev => 
       prev.map(plan => 
         plan.id === planId 
-          ? { ...plan, notes: editingNotes }
+          ? { ...plan, notes: sanitizedNotes }
           : plan
       )
     );
@@ -329,14 +362,16 @@ export default function App() {
 
   const handleSaveNotesInDetail = () => {
     if (selectedPlan) {
+      // Sanitize notes before saving
+      const sanitizedNotes = sanitizeInput(editingNotes, 5000);
       setPracticePlans(prev => 
         prev.map(plan => 
           plan.id === selectedPlan.id 
-            ? { ...plan, notes: editingNotes }
+            ? { ...plan, notes: sanitizedNotes }
             : plan
         )
       );
-      setSelectedPlan(prev => prev ? { ...prev, notes: editingNotes } : null);
+      setSelectedPlan(prev => prev ? { ...prev, notes: sanitizedNotes } : null);
       setEditingNotesInDetail(false);
       setEditingNotes('');
       Alert.alert('Success', 'Notes updated successfully!');
@@ -430,6 +465,7 @@ export default function App() {
         placeholder="Drill Title"
         value={newDrill.title}
         onChangeText={(text: string) => setNewDrill({ ...newDrill, title: text })}
+        maxLength={100}
       />
       
       <TextInput
@@ -437,6 +473,7 @@ export default function App() {
         placeholder="Category (e.g., Hitting, Fielding, Pitching)"
         value={newDrill.category}
         onChangeText={(text: string) => setNewDrill({ ...newDrill, category: text })}
+        maxLength={50}
       />
       
       <TextInput
@@ -447,6 +484,7 @@ export default function App() {
         multiline
         numberOfLines={4}
         textAlignVertical="top"
+        maxLength={2000}
       />
       
       <View style={styles.buttonContainer}>
@@ -473,6 +511,7 @@ export default function App() {
         placeholder="Practice Plan Name"
         value={newPlanName}
         onChangeText={(text: string) => setNewPlanName(text)}
+        maxLength={100}
       />
       
       <View style={styles.buttonContainer}>
@@ -569,6 +608,7 @@ export default function App() {
                   multiline
                   numberOfLines={4}
                   textAlignVertical="top"
+                  maxLength={5000}
                 />
                 <View style={styles.notesEditActions}>
                   <TouchableOpacity
@@ -728,6 +768,7 @@ export default function App() {
                         multiline
                         numberOfLines={4}
                         textAlignVertical="top"
+                        maxLength={5000}
                       />
                     </>
                   ) : (
@@ -757,7 +798,9 @@ export default function App() {
 
   // Welcome Screen Component
   const renderWelcomeScreen = () => {
-    console.log('Rendering welcome screen');
+    if (isDevelopment) {
+      console.log('Rendering welcome screen');
+    }
     return (
     <View style={[styles.welcomeContainer, { paddingTop: statusBarHeight, paddingBottom: bottomPadding }]}>
       {Platform.OS !== 'web' && <StatusBar style="light" />}
@@ -773,21 +816,21 @@ export default function App() {
           }
         ]}
       >
-        {/* Baseball Logo */}
+        {/* Logo */}
         <View style={styles.logoContainer}>
           <View style={styles.baseball}>
-            <Text style={styles.baseballEmoji}>⚾</Text>
+            <Text style={styles.baseballEmoji}>o</Text>
           </View>
           <View style={styles.logoText}>
-            <Text style={styles.appTitle}>Dug⚾ut</Text>
-            <Text style={styles.appSubtitle}>Pr⚾</Text>
+            <Text style={styles.appTitle}>Dugout</Text>
+            <Text style={styles.appSubtitle}>Pro</Text>
           </View>
         </View>
         
         {/* Tagline */}
         <Animated.View style={[styles.taglineContainer, { opacity: fadeAnim }]}>
           <Text style={styles.tagline}>Plan • Practice • Play</Text>
-          <Text style={styles.taglineSub}>Your Ultimate Baseball Practice Companion</Text>
+          <Text style={styles.taglineSub}>Your Ultimate Baseball Companion</Text>
         </Animated.View>
         
         {/* Credit */}
@@ -852,7 +895,7 @@ export default function App() {
           }}
         >
           <View style={styles.menuOptionIcon}>
-            <Text style={styles.menuIcon}>⚾</Text>
+            <Text style={styles.menuIcon}>o</Text>
           </View>
           <View style={styles.menuOptionContent}>
             <Text style={styles.menuOptionTitle}>Field Diagram</Text>
