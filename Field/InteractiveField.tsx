@@ -478,7 +478,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         } : {})}
       >
         {/* Image-based Baseball Field Background */}
-        <BaseballFieldImage width={fieldWidth} height={fieldHeight} />
+        <BaseballFieldImage />
         
         {/* Overlay Players, Ball, and Runners on top of field - only render when fieldSize is set */}
         {fieldSize > 0 && (
