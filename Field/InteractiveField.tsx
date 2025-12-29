@@ -1,22 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Dimensions, Text, PanResponder, Animated, TouchableOpacity, Platform } from 'react-native';
+import { View, Text, PanResponder, Animated, TouchableOpacity, Platform } from 'react-native';
 import BaseballFieldImage from './BaseballFieldImage';
-
-// Field dimensions will be calculated dynamically based on viewport
-const getFieldDimensions = () => {
-  const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
-  
-  if (Platform.OS === 'web') {
-    // On web, use 90% of viewport width, but cap at 900px max, and ensure it fits height too
-    const maxWidth = Math.min(900, screenWidth * 0.9);
-    const maxHeight = (screenHeight - 200) * 0.9; // Leave space for header and buttons
-    const fieldSize = Math.min(maxWidth, maxHeight);
-    return Math.max(400, fieldSize); // Minimum 400px
-  } else {
-    // On mobile, use full width minus padding
-    return screenWidth - 40;
-  }
-};
 
 // Initialize positions based on field dimensions - standard baseball positions
 // Positions are percentage-based (0.0 to 1.0) so they scale correctly with field size
@@ -46,60 +30,32 @@ interface InteractiveFieldProps {
 }
 
 export default function InteractiveField({ onReset }: InteractiveFieldProps) {
-  // Calculate initial field dimensions
-  const initialDim = getFieldDimensions();
-  
-  // Calculate field dimensions dynamically
-  const [fieldDimensions, setFieldDimensions] = useState({ width: initialDim, height: initialDim });
+  // Use actual rendered container width as single source of truth
+  const [fieldSize, setFieldSize] = useState(0);
+  const fieldWidth = fieldSize;
+  const fieldHeight = fieldSize;
 
-  const fieldWidth = fieldDimensions.width;
-  const fieldHeight = fieldDimensions.height;
-
-  // Initialize positions with correct field dimensions
-  const [playerPositions, setPlayerPositions] = useState(() => getInitialPositions(initialDim));
-  const [ballPos, setBallPos] = useState(() => ({ x: initialDim * 0.35, y: initialDim * 0.70 }));
+  // Initialize positions - will be updated when fieldSize is set
+  const [playerPositions, setPlayerPositions] = useState<Array<{key: string, label: string, x: number, y: number, color: string}>>([]);
+  const [ballPos, setBallPos] = useState({ x: 0, y: 0 });
   const [runners, setRunners] = useState<Array<{id: string, x: number, y: number}>>([]);
   const [draggedPlayer, setDraggedPlayer] = useState<string | null>(null);
   const [draggedBall, setDraggedBall] = useState(false);
   const [draggedRunner, setDraggedRunner] = useState<string | null>(null);
 
-  // Recalculate on dimension changes
+  // Update positions when field size changes - recalculate based on actual rendered size
   useEffect(() => {
-    const updateDimensions = () => {
-      const dim = getFieldDimensions();
-      setFieldDimensions({ width: dim, height: dim });
-    };
-
-    const subscription = Dimensions.addEventListener('change', updateDimensions);
-    updateDimensions(); // Initial calculation
-
-    // Also update on window resize for web
-    if (Platform.OS === 'web') {
-      const handleResize = () => {
-        setTimeout(updateDimensions, 100); // Small delay to ensure dimensions are updated
-      };
-      window.addEventListener('resize', handleResize);
-      return () => {
-        subscription?.remove();
-        window.removeEventListener('resize', handleResize);
-      };
+    if (fieldSize > 0) {
+      setPlayerPositions(getInitialPositions(fieldSize));
+      setBallPos({ x: fieldSize * 0.35, y: fieldSize * 0.70 });
     }
-
-    return () => subscription?.remove();
-  }, []);
-
-
-  // Update positions when field size changes - recalculate based on new dimensions
-  useEffect(() => {
-    if (fieldWidth > 0) {
-      setPlayerPositions(getInitialPositions(fieldWidth));
-      setBallPos({ x: fieldWidth * 0.35, y: fieldWidth * 0.70 });
-    }
-  }, [fieldWidth]);
+  }, [fieldSize]);
 
   const resetPositions = () => {
-    setPlayerPositions(getInitialPositions(fieldWidth));
-    setBallPos({ x: fieldWidth * 0.35, y: fieldWidth * 0.70 });
+    if (fieldSize > 0) {
+      setPlayerPositions(getInitialPositions(fieldSize));
+      setBallPos({ x: fieldSize * 0.35, y: fieldSize * 0.70 });
+    }
     setRunners([]);
     setDraggedPlayer(null);
     setDraggedBall(false);
@@ -113,8 +69,8 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const addRunner = () => {
     const newRunner = {
       id: `runner_${Date.now()}`,
-      x: fieldWidth * 0.85, // Bottom right area
-      y: fieldWidth * 0.85
+      x: fieldSize * 0.85, // Bottom right area
+      y: fieldSize * 0.85
     };
     setRunners(prev => [...prev, newRunner]);
   };
@@ -131,6 +87,48 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const [containerWindowLayout, setContainerWindowLayout] = useState<{x: number, y: number, width: number, height: number} | null>(null);
   const [dragStart, setDragStart] = useState<{x: number, y: number, key: string, isBall: boolean, isRunner: boolean} | null>(null);
   
+  // Helper function to get coordinates relative to container - used by both start and move events
+  const getContainerRelativeCoords = (e: any): { x: number; y: number } => {
+    const nativeEvent = e.nativeEvent || e;
+    let clientX = 0;
+    let clientY = 0;
+
+    if (nativeEvent.touches && nativeEvent.touches[0]) {
+      clientX = nativeEvent.touches[0].clientX;
+      clientY = nativeEvent.touches[0].clientY;
+    } else if (nativeEvent.changedTouches && nativeEvent.changedTouches[0]) {
+      clientX = nativeEvent.changedTouches[0].clientX;
+      clientY = nativeEvent.changedTouches[0].clientY;
+    } else {
+      clientX = nativeEvent.clientX !== undefined
+        ? nativeEvent.clientX
+        : nativeEvent.pageX !== undefined
+        ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0)
+        : 0;
+      clientY = nativeEvent.clientY !== undefined
+        ? nativeEvent.clientY
+        : nativeEvent.pageY !== undefined
+        ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0)
+        : 0;
+    }
+
+    if (containerDOMRef.current && typeof containerDOMRef.current.getBoundingClientRect === 'function') {
+      const rect = containerDOMRef.current.getBoundingClientRect();
+      return {
+        x: clientX - rect.left,
+        y: clientY - rect.top
+      };
+    } else if (fieldContainerRef.current) {
+      // Fallback - but this should be synchronous, so we'll use a workaround
+      let result = { x: 0, y: 0 };
+      fieldContainerRef.current.measureInWindow((winX, winY) => {
+        result = { x: clientX - winX, y: clientY - winY };
+      });
+      return result;
+    }
+    return { x: 0, y: 0 };
+  };
+
   // Callback ref to get direct DOM element access
   const setContainerRef = (node: View | null) => {
     fieldContainerRef.current = node;
@@ -270,67 +268,18 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const getWebHandlers = (key: string, isBall: boolean = false, isRunner: boolean = false) => {
     if (Platform.OS !== 'web') return {};
 
-    const getRelativeToContainer = (
-      e: any,
-      callback: (coords: { x: number; y: number }) => void
-    ) => {
-      const nativeEvent = e.nativeEvent || e;
-
-      let clientX = 0;
-      let clientY = 0;
-
-      if (nativeEvent.touches && nativeEvent.touches[0]) {
-        clientX = nativeEvent.touches[0].clientX;
-        clientY = nativeEvent.touches[0].clientY;
-      } else if (nativeEvent.changedTouches && nativeEvent.changedTouches[0]) {
-        clientX = nativeEvent.changedTouches[0].clientX;
-        clientY = nativeEvent.changedTouches[0].clientY;
-      } else {
-        clientX =
-          nativeEvent.clientX !== undefined
-            ? nativeEvent.clientX
-            : nativeEvent.pageX !== undefined
-            ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0)
-            : 0;
-
-        clientY =
-          nativeEvent.clientY !== undefined
-            ? nativeEvent.clientY
-            : nativeEvent.pageY !== undefined
-            ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0)
-            : 0;
-      }
-
-      if (containerDOMRef.current && typeof containerDOMRef.current.getBoundingClientRect === 'function') {
-        const rect = containerDOMRef.current.getBoundingClientRect();
-        const x = clientX - rect.left;
-        const y = clientY - rect.top;
-        callback({ x, y });
-      } else if (fieldContainerRef.current) {
-        fieldContainerRef.current.measureInWindow((winX, winY) => {
-          const x = clientX - winX;
-          const y = clientY - winY;
-          callback({ x, y });
-        });
-      } else {
-        callback({ x: 0, y: 0 });
-      }
-    };
-
     return {
       onMouseDown: (e: any) => {
         e.preventDefault();
         e.stopPropagation();
-        getRelativeToContainer(e, ({ x, y }) => {
-          handleStart(key, isBall, isRunner, x, y);
-        });
+        const coords = getContainerRelativeCoords(e);
+        handleStart(key, isBall, isRunner, coords.x, coords.y);
       },
       onTouchStart: (e: any) => {
         e.preventDefault();
         e.stopPropagation();
-        getRelativeToContainer(e, ({ x, y }) => {
-          handleStart(key, isBall, isRunner, x, y);
-        });
+        const coords = getContainerRelativeCoords(e);
+        handleStart(key, isBall, isRunner, coords.x, coords.y);
       },
     };
   };
@@ -454,16 +403,21 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
       <View 
         ref={setContainerRef}
         style={{ 
-          width: fieldWidth, 
-          height: fieldHeight, 
+          width: '100%',
+          maxWidth: 900,
+          aspectRatio: 1,
           alignSelf: 'center', 
           marginVertical: 20, 
           position: 'relative',
-          maxWidth: '100%'
         }}
         onLayout={(e) => {
           const { x, y, width, height } = e.nativeEvent.layout;
           setContainerLayout({ x, y, width, height });
+          
+          // Set fieldSize to actual rendered width - this is the single source of truth
+          if (width !== fieldSize) {
+            setFieldSize(width);
+          }
           
           // Also measure in window for accurate cross-browser coordinates
           if (fieldContainerRef.current) {
@@ -476,18 +430,8 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           // @ts-ignore - React Native Web supports these
           onMouseMove: (e: any) => {
             if (dragStart) {
-              const nativeEvent = e.nativeEvent || e;
-              const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX !== undefined ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
-              const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY !== undefined ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
-              
-              if (containerDOMRef.current && typeof containerDOMRef.current.getBoundingClientRect === 'function') {
-                const rect = containerDOMRef.current.getBoundingClientRect();
-                handleMove(clientX - rect.left, clientY - rect.top);
-              } else if (fieldContainerRef.current) {
-                fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
-                  handleMove(clientX - winX, clientY - winY);
-                });
-              }
+              const coords = getContainerRelativeCoords(e);
+              handleMove(coords.x, coords.y);
             }
           },
           // @ts-ignore
@@ -502,19 +446,8 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           onTouchMove: (e: any) => {
             if (dragStart) {
               e.preventDefault();
-              const nativeEvent = e.nativeEvent || e;
-              const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
-              const clientX = touch?.clientX !== undefined ? touch.clientX : (touch?.pageX !== undefined ? touch.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
-              const clientY = touch?.clientY !== undefined ? touch.clientY : (touch?.pageY !== undefined ? touch.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
-              
-              if (containerDOMRef.current && typeof containerDOMRef.current.getBoundingClientRect === 'function') {
-                const rect = containerDOMRef.current.getBoundingClientRect();
-                handleMove(clientX - rect.left, clientY - rect.top);
-              } else if (fieldContainerRef.current) {
-                fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
-                  handleMove(clientX - winX, clientY - winY);
-                });
-              }
+              const coords = getContainerRelativeCoords(e);
+              handleMove(coords.x, coords.y);
             }
           },
           // @ts-ignore
@@ -526,30 +459,32 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         {/* Image-based Baseball Field Background */}
         <BaseballFieldImage width={fieldWidth} height={fieldHeight} />
         
-        {/* Overlay Players, Ball, and Runners on top of field */}
-        <View style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          pointerEvents: 'box-none'
-        }}>
-          {/* Players */}
-          {playerPositions.map(renderPlayer)}
+        {/* Overlay Players, Ball, and Runners on top of field - only render when fieldSize is set */}
+        {fieldSize > 0 && (
+          <View style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            pointerEvents: 'box-none'
+          }}>
+            {/* Players */}
+            {playerPositions.map(renderPlayer)}
 
-          {/* Baseball */}
-          {renderBall()}
+            {/* Baseball */}
+            {renderBall()}
 
-          {/* Runners */}
-          {runners.map(renderRunner)}
-        </View>
+            {/* Runners */}
+            {runners.map(renderRunner)}
+          </View>
+        )}
       </View>
 
       {/* Add/Remove Runner Buttons */}
       <View style={{ 
         marginTop: 20,
-        width: fieldWidth,
+        width: fieldSize > 0 ? fieldSize : '100%',
         maxWidth: '100%',
         flexDirection: 'row', 
         justifyContent: 'center', 
@@ -584,7 +519,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
       {/* Instructions */}
       <View style={{ 
         marginTop: 20, 
-        width: fieldWidth,
+        width: fieldSize > 0 ? fieldSize : '100%',
         maxWidth: '100%',
         padding: 15, 
         backgroundColor: '#f0f0f0', 
