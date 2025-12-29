@@ -33,6 +33,9 @@ yarn-error.*
 # local env files
 .env*.local
 
+# Local master files (keep locally only)
+MASTER back pain app build prompt*.md
+
 # typescript
 *.tsbuildinfo
 
