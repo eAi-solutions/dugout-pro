@@ -1,4 +1,4 @@
-# Dugout Planner
+# Dugout Pro
 
 A comprehensive React Native/Expo app for baseball coaches to plan and organize practice sessions with interactive field diagrams and drill management.
 
@@ -38,8 +38,8 @@ A comprehensive React Native/Expo app for baseball coaches to plan and organize 
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/dugout-planner.git
-cd dugout-planner
+git clone https://github.com/yourusername/dugout-pro.git
+cd dugout-pro
 ```
 
 2. Install dependencies:
@@ -67,7 +67,7 @@ npm run web
 ## Project Structure
 
 ```
-dugout-planner/
+dugout-pro/
 ├── App.tsx                 # Main application component
 ├── BaseballField.tsx       # Interactive field component
 ├── BaseballFieldImage.tsx  # Field image component

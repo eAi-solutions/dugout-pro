@@ -779,7 +779,7 @@ export default function App() {
           </View>
           <View style={styles.logoText}>
             <Text style={styles.appTitle}>Dugout</Text>
-            <Text style={styles.appSubtitle}>Planner</Text>
+            <Text style={styles.appSubtitle}>Pro</Text>
           </View>
         </View>
         
@@ -814,7 +814,7 @@ export default function App() {
       
       {/* Header */}
       <View style={styles.menuHeader}>
-        <Text style={styles.menuTitle}>Dugout Planner</Text>
+        <Text style={styles.menuTitle}>Dugout Pro</Text>
         <Text style={styles.menuSubtitle}>Choose your activity</Text>
       </View>
 
