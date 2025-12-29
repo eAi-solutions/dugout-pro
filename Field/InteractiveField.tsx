@@ -1,38 +1,104 @@
-import React, { useState } from 'react';
-import { View, Dimensions, Text, PanResponder, Animated, TouchableOpacity } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import { View, Dimensions, Text, PanResponder, Animated, TouchableOpacity, Platform } from 'react-native';
 import BaseballFieldImage from './BaseballFieldImage';
 
-const { width: screenWidth } = Dimensions.get('window');
-const fieldWidth = screenWidth;
-const fieldHeight = screenWidth;
+// Field dimensions will be calculated dynamically based on viewport
+const getFieldDimensions = () => {
+  const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+  
+  if (Platform.OS === 'web') {
+    // On web, use 90% of viewport width, but cap at 900px max, and ensure it fits height too
+    const maxWidth = Math.min(900, screenWidth * 0.9);
+    const maxHeight = (screenHeight - 200) * 0.9; // Leave space for header and buttons
+    const fieldSize = Math.min(maxWidth, maxHeight);
+    return Math.max(400, fieldSize); // Minimum 400px
+  } else {
+    // On mobile, use full width minus padding
+    return screenWidth - 40;
+  }
+};
 
-const positions = [
-  { key: 'P', label: 'P', x: screenWidth * 0.5, y: screenWidth * 0.6, color: '#e74c3c' },
-  { key: 'C', label: 'C', x: screenWidth * 0.5, y: screenWidth * 0.9, color: '#3498db' },
-  { key: '1B', label: '1B', x: screenWidth * 0.72, y: screenWidth * 0.75, color: '#2ecc71' },
-  { key: '2B', label: '2B', x: screenWidth * 0.6, y: screenWidth * 0.5, color: '#f39c12' },
-  { key: '3B', label: '3B', x: screenWidth * 0.28, y: screenWidth * 0.75, color: '#9b59b6' },
-  { key: 'SS', label: 'SS', x: screenWidth * 0.4, y: screenWidth * 0.5, color: '#1abc9c' },
-  { key: 'LF', label: 'LF', x: screenWidth * 0.2, y: screenWidth * 0.35, color: '#34495e' },
-  { key: 'CF', label: 'CF', x: screenWidth * 0.5, y: screenWidth * 0.2, color: '#e67e22' },
-  { key: 'RF', label: 'RF', x: screenWidth * 0.8, y: screenWidth * 0.35, color: '#27ae60' },
-];
+// Initialize positions based on field dimensions - standard baseball positions
+// Positions are percentage-based (0.0 to 1.0) so they scale correctly with field size
+// Based on standard baseball field layout: home plate at bottom center, bases form diamond
+// Coordinates match the actual baseball-field.png image layout
+// FINALIZED POSITIONS - These coordinates are locked in and will scale proportionally
+// across all devices, browsers, and screen sizes
+const getInitialPositions = (width: number) => {
+  // All positions use width for both x and y since field is square
+  // React Native coordinates: (0,0) is top-left, y increases downward
+  // Home plate is at bottom (y ~ 0.88), center field is at top (y ~ 0.12-0.15)
+  return [
+    { key: 'P', label: 'P', x: width * 0.35, y: width * 0.66, color: '#e74c3c' },      // Pitcher - centered on mound
+    { key: 'C', label: 'C', x: width * 0.35, y: width * 0.83, color: '#3498db' },      // Catcher - directly behind home plate
+    { key: '1B', label: '1B', x: width * 0.51, y: width * 0.61, color: '#2ecc71' },  // First Baseman - just past 1B base towards home (right side)
+    { key: '2B', label: '2B', x: width * 0.45, y: width * 0.50, color: '#f39c12' },   // Second Baseman - between 1B and 2B, closer to 2B
+    { key: '3B', label: '3B', x: width * 0.21, y: width * 0.60, color: '#9b59b6' }, // Third Baseman - just past 3B base towards home (left side)
+    { key: 'SS', label: 'SS', x: width * 0.25, y: width * 0.50, color: '#1abc9c' },  // Shortstop - between 2B and 3B, closer to 2B
+    { key: 'LF', label: 'LF', x: width * 0.11, y: width * 0.36, color: '#34495e' },  // Left Fielder - deep left outfield
+    { key: 'CF', label: 'CF', x: width * 0.35, y: width * 0.29, color: '#e67e22' },   // Center Fielder - deep center outfield
+    { key: 'RF', label: 'RF', x: width * 0.58, y: width * 0.36, color: '#27ae60' },   // Right Fielder - deep right outfield
+  ];
+};
 
 interface InteractiveFieldProps {
   onReset?: () => void;
 }
 
 export default function InteractiveField({ onReset }: InteractiveFieldProps) {
-  const [playerPositions, setPlayerPositions] = useState(positions);
-  const [ballPos, setBallPos] = useState({ x: screenWidth * 0.55, y: screenWidth * 0.55 });
+  // Calculate initial field dimensions
+  const initialDim = getFieldDimensions();
+  
+  // Calculate field dimensions dynamically
+  const [fieldDimensions, setFieldDimensions] = useState({ width: initialDim, height: initialDim });
+
+  const fieldWidth = fieldDimensions.width;
+  const fieldHeight = fieldDimensions.height;
+
+  // Initialize positions with correct field dimensions
+  const [playerPositions, setPlayerPositions] = useState(() => getInitialPositions(initialDim));
+  const [ballPos, setBallPos] = useState(() => ({ x: initialDim * 0.35, y: initialDim * 0.70 }));
   const [runners, setRunners] = useState<Array<{id: string, x: number, y: number}>>([]);
   const [draggedPlayer, setDraggedPlayer] = useState<string | null>(null);
   const [draggedBall, setDraggedBall] = useState(false);
   const [draggedRunner, setDraggedRunner] = useState<string | null>(null);
 
+  // Recalculate on dimension changes
+  useEffect(() => {
+    const updateDimensions = () => {
+      const dim = getFieldDimensions();
+      setFieldDimensions({ width: dim, height: dim });
+    };
+
+    const subscription = Dimensions.addEventListener('change', updateDimensions);
+    updateDimensions(); // Initial calculation
+
+    // Also update on window resize for web
+    if (Platform.OS === 'web') {
+      const handleResize = () => {
+        setTimeout(updateDimensions, 100); // Small delay to ensure dimensions are updated
+      };
+      window.addEventListener('resize', handleResize);
+      return () => {
+        subscription?.remove();
+        window.removeEventListener('resize', handleResize);
+      };
+    }
+
+    return () => subscription?.remove();
+  }, []);
+
+  // Update positions when field size changes - recalculate based on new dimensions
+  useEffect(() => {
+    if (fieldWidth > 0) {
+      setPlayerPositions(getInitialPositions(fieldWidth));
+      setBallPos({ x: fieldWidth * 0.35, y: fieldWidth * 0.70 });
+    }
+  }, [fieldWidth]);
+
   const resetPositions = () => {
-    setPlayerPositions(positions);
-    setBallPos({ x: screenWidth * 0.55, y: screenWidth * 0.55 });
+    setPlayerPositions(getInitialPositions(fieldWidth));
+    setBallPos({ x: fieldWidth * 0.35, y: fieldWidth * 0.70 });
     setRunners([]);
     setDraggedPlayer(null);
     setDraggedBall(false);
@@ -46,8 +112,8 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const addRunner = () => {
     const newRunner = {
       id: `runner_${Date.now()}`,
-      x: screenWidth * 0.85, // Bottom right area
-      y: screenWidth * 0.85
+      x: fieldWidth * 0.85, // Bottom right area
+      y: fieldWidth * 0.85
     };
     setRunners(prev => [...prev, newRunner]);
   };
@@ -58,62 +124,132 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     }
   };
 
+  const fieldContainerRef = useRef<View>(null);
+  const [containerLayout, setContainerLayout] = useState<{x: number, y: number, width: number, height: number} | null>(null);
+  const [dragStart, setDragStart] = useState<{x: number, y: number, key: string, isBall: boolean, isRunner: boolean} | null>(null);
+
+  const handleStart = (key: string, isBall: boolean, isRunner: boolean, startX: number, startY: number) => {
+    if (isBall) {
+      setDraggedBall(true);
+      setDragStart({ x: startX, y: startY, key, isBall: true, isRunner: false });
+    } else if (isRunner) {
+      setDraggedRunner(key);
+      setDragStart({ x: startX, y: startY, key, isBall: false, isRunner: true });
+    } else {
+      setDraggedPlayer(key);
+      setDragStart({ x: startX, y: startY, key, isBall: false, isRunner: false });
+    }
+  };
+
+  const handleMove = (currentX: number, currentY: number) => {
+    if (!dragStart) return;
+
+    const deltaX = currentX - dragStart.x;
+    const deltaY = currentY - dragStart.y;
+
+    let currentPos;
+    if (dragStart.isBall) {
+      currentPos = ballPos;
+    } else if (dragStart.isRunner) {
+      currentPos = runners.find(r => r.id === dragStart.key);
+    } else {
+      currentPos = playerPositions.find(p => p.key === dragStart.key);
+    }
+
+    if (!currentPos) return;
+
+    const newX = Math.max(18, Math.min(fieldWidth - 18, currentPos.x + deltaX));
+    const newY = Math.max(18, Math.min(fieldHeight - 18, currentPos.y + deltaY));
+
+    if (dragStart.isBall) {
+      setBallPos({ x: newX, y: newY });
+    } else if (dragStart.isRunner) {
+      setRunners(prev =>
+        prev.map((runner) =>
+          runner.id === dragStart.key ? { ...runner, x: newX, y: newY } : runner
+        )
+      );
+    } else {
+      setPlayerPositions(prev =>
+        prev.map((pos) =>
+          pos.key === dragStart.key ? { ...pos, x: newX, y: newY } : pos
+        )
+      );
+    }
+
+    // Update drag start position for next move
+    setDragStart(prev => prev ? { ...prev, x: currentX, y: currentY } : null);
+  };
+
+  const handleEnd = () => {
+    setDraggedPlayer(null);
+    setDraggedBall(false);
+    setDraggedRunner(null);
+    setDragStart(null);
+  };
+
   const createPanResponder = (key: string, isBall: boolean = false, isRunner: boolean = false) => {
     return PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => {
-        if (isBall) {
-          setDraggedBall(true);
-        } else if (isRunner) {
-          setDraggedRunner(key);
-        } else {
-          setDraggedPlayer(key);
-        }
+      onPanResponderGrant: (evt) => {
+        const { locationX, locationY } = evt.nativeEvent;
+        handleStart(key, isBall, isRunner, locationX, locationY);
       },
       onPanResponderMove: (evt, gestureState) => {
-        // Use gestureState.dx and dy for relative movement
-        let currentPos;
-        if (isBall) {
-          currentPos = ballPos;
-        } else if (isRunner) {
-          currentPos = runners.find(r => r.id === key);
-        } else {
-          currentPos = playerPositions.find(p => p.key === key);
-        }
-        
-        if (!currentPos) return;
-        
-        const newX = Math.max(18, Math.min(screenWidth - 18, currentPos.x + gestureState.dx));
-        const newY = Math.max(18, Math.min(screenWidth - 18, currentPos.y + gestureState.dy));
-        
-        if (isBall) {
-          setBallPos({ x: newX, y: newY });
-        } else if (isRunner) {
-          setRunners(prev =>
-            prev.map((runner) =>
-              runner.id === key ? { ...runner, x: newX, y: newY } : runner
-            )
-          );
-        } else {
-          setPlayerPositions(prev =>
-            prev.map((pos) =>
-              pos.key === key ? { ...pos, x: newX, y: newY } : pos
-            )
-          );
-        }
+        if (!dragStart) return;
+        const { locationX, locationY } = evt.nativeEvent;
+        handleMove(locationX, locationY);
       },
-      onPanResponderRelease: () => {
-        setDraggedPlayer(null);
-        setDraggedBall(false);
-        setDraggedRunner(null);
-      },
+      onPanResponderRelease: handleEnd,
+      onPanResponderTerminate: handleEnd,
     });
+  };
+
+  // Web mouse/touch handlers - use nativeEvent coordinates
+  const getWebHandlers = (key: string, isBall: boolean = false, isRunner: boolean = false) => {
+    if (Platform.OS !== 'web') return {};
+    
+    const getRelativeCoords = (e: any) => {
+      if (containerLayout) {
+        // For web, try to get coordinates relative to container
+        const nativeEvent = e.nativeEvent || e;
+        if (nativeEvent.pageX !== undefined && nativeEvent.pageY !== undefined) {
+          return {
+            x: nativeEvent.pageX - containerLayout.x,
+            y: nativeEvent.pageY - containerLayout.y
+          };
+        }
+      }
+      // Fallback to locationX/locationY
+      const nativeEvent = e.nativeEvent || e;
+      return {
+        x: nativeEvent.locationX || nativeEvent.pageX || 0,
+        y: nativeEvent.locationY || nativeEvent.pageY || 0
+      };
+    };
+    
+    return {
+      onMouseDown: (e: any) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const coords = getRelativeCoords(e);
+        handleStart(key, isBall, isRunner, coords.x, coords.y);
+      },
+      onTouchStart: (e: any) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const touch = e.nativeEvent?.touches?.[0] || e.nativeEvent?.changedTouches?.[0] || e.nativeEvent;
+        const coords = getRelativeCoords(touch);
+        handleStart(key, isBall, isRunner, coords.x, coords.y);
+      },
+    };
   };
 
   const renderPlayer = (player: any) => {
     const panResponder = createPanResponder(player.key);
     const isDragging = draggedPlayer === player.key;
+    const webHandlers = getWebHandlers(player.key);
     
     return (
       <Animated.View
@@ -136,8 +272,10 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           shadowRadius: isDragging ? 5 : 3,
           elevation: isDragging ? 8 : 5,
           transform: [{ scale: isDragging ? 1.1 : 1 }],
+          cursor: Platform.OS === 'web' ? 'grab' : 'default',
+          zIndex: isDragging ? 1000 : 10,
         }}
-        {...panResponder.panHandlers}
+        {...(Platform.OS === 'web' ? webHandlers : panResponder.panHandlers)}
       >
         <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 12 }}>{player.label}</Text>
       </Animated.View>
@@ -147,6 +285,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const renderBall = () => {
     const panResponder = createPanResponder('ball', true);
     const isDragging = draggedBall;
+    const webHandlers = getWebHandlers('ball', true);
     
     return (
       <Animated.View
@@ -168,8 +307,10 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           shadowRadius: isDragging ? 4 : 2,
           elevation: isDragging ? 6 : 3,
           transform: [{ scale: isDragging ? 1.2 : 1 }],
+          cursor: Platform.OS === 'web' ? 'grab' : 'default',
+          zIndex: isDragging ? 1000 : 10,
         }}
-        {...panResponder.panHandlers}
+        {...(Platform.OS === 'web' ? webHandlers : panResponder.panHandlers)}
       >
         <Text style={{ color: '#c00', fontWeight: 'bold', fontSize: 12 }}>⚾</Text>
       </Animated.View>
@@ -179,6 +320,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const renderRunner = (runner: {id: string, x: number, y: number}) => {
     const panResponder = createPanResponder(runner.id, false, true);
     const isDragging = draggedRunner === runner.id;
+    const webHandlers = getWebHandlers(runner.id, false, true);
     
     return (
       <Animated.View
@@ -201,8 +343,10 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           shadowRadius: isDragging ? 5 : 3,
           elevation: isDragging ? 8 : 5,
           transform: [{ scale: isDragging ? 1.1 : 1 }],
+          cursor: Platform.OS === 'web' ? 'grab' : 'default',
+          zIndex: isDragging ? 1000 : 10,
         }}
-        {...panResponder.panHandlers}
+        {...(Platform.OS === 'web' ? webHandlers : panResponder.panHandlers)}
       >
         <Text style={{ 
           color: '#ffffff', 
@@ -217,16 +361,54 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   };
 
   return (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-      <View style={{ 
-        width: screenWidth, 
-        height: screenWidth, 
-        alignSelf: 'center', 
-        marginVertical: 20, 
-        position: 'relative'
-      }}>
+    <View style={{ width: '100%', alignItems: 'center', paddingHorizontal: 10 }}>
+      <View 
+        ref={fieldContainerRef}
+        style={{ 
+          width: fieldWidth, 
+          height: fieldHeight, 
+          alignSelf: 'center', 
+          marginVertical: 20, 
+          position: 'relative',
+          maxWidth: '100%'
+        }}
+        onLayout={(e) => {
+          const { x, y, width, height } = e.nativeEvent.layout;
+          setContainerLayout({ x, y, width, height });
+        }}
+        onMouseMove={Platform.OS === 'web' ? (e: any) => {
+          if (dragStart && containerLayout) {
+            const nativeEvent = e.nativeEvent || e;
+            const pageX = nativeEvent.pageX || 0;
+            const pageY = nativeEvent.pageY || 0;
+            const x = pageX - containerLayout.x;
+            const y = pageY - containerLayout.y;
+            handleMove(x, y);
+          }
+        } : undefined}
+        onMouseUp={Platform.OS === 'web' ? () => {
+          if (dragStart) handleEnd();
+        } : undefined}
+        onMouseLeave={Platform.OS === 'web' ? () => {
+          if (dragStart) handleEnd();
+        } : undefined}
+        onTouchMove={Platform.OS === 'web' ? (e: any) => {
+          if (dragStart && containerLayout) {
+            e.preventDefault();
+            const touch = e.nativeEvent?.touches?.[0] || e.nativeEvent?.changedTouches?.[0] || e.nativeEvent;
+            const pageX = touch.pageX || 0;
+            const pageY = touch.pageY || 0;
+            const x = pageX - containerLayout.x;
+            const y = pageY - containerLayout.y;
+            handleMove(x, y);
+          }
+        } : undefined}
+        onTouchEnd={Platform.OS === 'web' ? () => {
+          if (dragStart) handleEnd();
+        } : undefined}
+      >
         {/* Image-based Baseball Field Background */}
-        <BaseballFieldImage />
+        <BaseballFieldImage width={fieldWidth} height={fieldHeight} />
         
         {/* Overlay Players, Ball, and Runners on top of field */}
         <View style={{
@@ -250,7 +432,9 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
 
       {/* Add/Remove Runner Buttons */}
       <View style={{ 
-        marginTop: 20, 
+        marginTop: 20,
+        width: fieldWidth,
+        maxWidth: '100%',
         flexDirection: 'row', 
         justifyContent: 'center', 
         alignItems: 'center',
@@ -282,7 +466,15 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
       </View>
 
       {/* Instructions */}
-      <View style={{ marginTop: 20, padding: 15, backgroundColor: '#f0f0f0', borderRadius: 8, alignItems: 'center' }}>
+      <View style={{ 
+        marginTop: 20, 
+        width: fieldWidth,
+        maxWidth: '100%',
+        padding: 15, 
+        backgroundColor: '#f0f0f0', 
+        borderRadius: 8, 
+        alignItems: 'center' 
+      }}>
         <Text style={{ fontSize: 14, fontWeight: 'bold', marginBottom: 5, color: '#333' }}>
           Interactive Field
         </Text>

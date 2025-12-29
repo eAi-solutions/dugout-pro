@@ -31,7 +31,7 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
 
 
   return (
-    <View style={[styles.container, { paddingTop: statusBarHeight, paddingBottom: bottomPadding }]}>
+    <View style={[styles.container, { paddingTop: Platform.OS === 'web' ? 0 : statusBarHeight, paddingBottom: Platform.OS === 'web' ? 0 : bottomPadding }]}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={onBack}>
           <Text style={styles.backButtonText}>← Menu</Text>
@@ -40,16 +40,15 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
         <View style={styles.headerRight} />
       </View>
 
-
-      <View style={styles.fieldContainer}>
-        <InteractiveField onReset={resetPositions} />
-      </View>
-
-      <View style={styles.instructions}>
-        <Text style={styles.instructionText}>
-          • Use Reset to return to standard positions
-        </Text>
-      </View>
+      <ScrollView 
+        style={styles.scrollContainer}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={true}
+      >
+        <View style={styles.fieldContainer}>
+          <InteractiveField onReset={resetPositions} />
+        </View>
+      </ScrollView>
     </View>
   );
 };
@@ -82,21 +81,19 @@ const styles = StyleSheet.create({
   headerRight: {
     width: 60, // Same width as back button for balance
   },
-  fieldContainer: {
+  scrollContainer: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+  },
+  scrollContent: {
     padding: 20,
+    paddingBottom: 40,
+    alignItems: 'center',
   },
-  instructions: {
-    padding: 15,
-    backgroundColor: '#ecf0f1',
-  },
-  instructionText: {
-    fontSize: 12,
-    color: '#7f8c8d',
-    textAlign: 'center',
-    lineHeight: 18,
+  fieldContainer: {
+    width: '100%',
+    maxWidth: Platform.OS === 'web' ? 600 : screenWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
 

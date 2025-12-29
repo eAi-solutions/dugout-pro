@@ -16,7 +16,19 @@ import { baseballDrills, Drill, PracticePlan } from './Data/Models/baseballDrill
 import BaseballField from './Field/BaseballField';
 
 export default function App() {
-  const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
+  console.log('App component rendering...');
+  
+  // Wrap Dimensions in try-catch for web compatibility
+  let screenHeight = 800;
+  let screenWidth = 400;
+  try {
+    const dimensions = Dimensions.get('window');
+    screenHeight = dimensions.height || 800;
+    screenWidth = dimensions.width || 400;
+    console.log('Dimensions:', { screenHeight, screenWidth });
+  } catch (error) {
+    console.warn('Dimensions API error:', error);
+  }
   
   // More conservative safe area calculations
   const isLargeScreen = screenHeight > 800;
@@ -39,13 +51,13 @@ export default function App() {
   const [showMenu, setShowMenu] = useState(false);
   const [showPracticePlanning, setShowPracticePlanning] = useState(false);
   
-  // Animation values
-  const fadeAnim = new Animated.Value(0);
-  const scaleAnim = new Animated.Value(0.5);
-  const slideAnim = new Animated.Value(50);
-  const dot1Anim = new Animated.Value(0.3);
-  const dot2Anim = new Animated.Value(0.3);
-  const dot3Anim = new Animated.Value(0.3);
+  // Animation values - use useRef to persist across renders
+  const fadeAnim = React.useRef(new Animated.Value(0)).current;
+  const scaleAnim = React.useRef(new Animated.Value(0.5)).current;
+  const slideAnim = React.useRef(new Animated.Value(50)).current;
+  const dot1Anim = React.useRef(new Animated.Value(0.3)).current;
+  const dot2Anim = React.useRef(new Animated.Value(0.3)).current;
+  const dot3Anim = React.useRef(new Animated.Value(0.3)).current;
   const [newDrill, setNewDrill] = useState({
     title: '',
     category: '',
@@ -743,9 +755,11 @@ export default function App() {
   );
 
   // Welcome Screen Component
-  const renderWelcomeScreen = () => (
+  const renderWelcomeScreen = () => {
+    console.log('Rendering welcome screen');
+    return (
     <View style={[styles.welcomeContainer, { paddingTop: statusBarHeight, paddingBottom: bottomPadding }]}>
-      <StatusBar style="light" />
+      {Platform.OS !== 'web' && <StatusBar style="light" />}
       <Animated.View 
         style={[
           styles.welcomeContent,
@@ -777,7 +791,7 @@ export default function App() {
         
         {/* Credit */}
         <Animated.View style={[styles.creditContainer, { opacity: fadeAnim }]}>
-          <Text style={styles.creditText}>by EI-AI</Text>
+          <Text style={styles.creditText}>by eAi-solutions</Text>
         </Animated.View>
         
         {/* Loading indicator */}
@@ -790,7 +804,8 @@ export default function App() {
         </Animated.View>
       </Animated.View>
     </View>
-  );
+    );
+  };
 
   // Menu Screen Component
   const renderMenuScreen = () => (
@@ -959,7 +974,8 @@ export default function App() {
   
 
   // This should not be reached in normal flow
-  return null;
+  // Fallback: show menu if we somehow get here
+  return renderMenuScreen();
 }
 
 const styles = StyleSheet.create({

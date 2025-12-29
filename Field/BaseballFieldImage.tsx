@@ -1,15 +1,20 @@
 import React from "react";
-import { View, Dimensions, Image, StyleSheet } from "react-native";
+import { View, Image, StyleSheet } from "react-native";
 
-export default function BaseballFieldImage() {
-  const width = Dimensions.get("window").width;
-  const height = width; // Keep it square
+interface BaseballFieldImageProps {
+  width?: number;
+  height?: number;
+}
+
+export default function BaseballFieldImage({ width, height }: BaseballFieldImageProps) {
+  const imageWidth = width || 400;
+  const imageHeight = height || imageWidth; // Keep it square
 
   return (
     <View style={styles.container}>
       <Image
         source={require('../assets/baseball-field.png')}
-        style={[styles.fieldImage, { width, height }]}
+        style={[styles.fieldImage, { width: imageWidth, height: imageHeight }]}
         resizeMode="contain"
       />
     </View>
