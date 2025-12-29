@@ -258,7 +258,29 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     const getRelativeCoords = (e: any, callback: (coords: {x: number, y: number}) => void) => {
       const nativeEvent = e.nativeEvent || e;
       
-      // Get viewport coordinates from the event
+      // PRIORITY 1: Use React Native's locationX/locationY - these are element-relative and work across all browsers
+      // This is the most reliable method as it doesn't depend on viewport calculations or container offsets
+      if (nativeEvent.locationX !== undefined && nativeEvent.locationY !== undefined) {
+        callback({
+          x: nativeEvent.locationX,
+          y: nativeEvent.locationY
+        });
+        return;
+      }
+      
+      // PRIORITY 2: Try to get locationX/locationY from touch events
+      if (nativeEvent.touches || nativeEvent.changedTouches) {
+        const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0];
+        if (touch && touch.locationX !== undefined && touch.locationY !== undefined) {
+          callback({
+            x: touch.locationX,
+            y: touch.locationY
+          });
+          return;
+        }
+      }
+      
+      // FALLBACK: Calculate from viewport coordinates if locationX/locationY not available
       let clientX = 0;
       let clientY = 0;
       
@@ -271,7 +293,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY !== undefined ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
       }
       
-      // Use measureInWindow to get fresh bounds on every event for accuracy
+      // Use measureInWindow to get fresh bounds for viewport-to-element conversion
       if (fieldContainerRef.current) {
         fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
           const x = clientX - winX;
@@ -279,7 +301,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           callback({ x, y });
         });
       } else {
-        // Fallback to cached bounds
+        // Final fallback to cached bounds
         const bounds = getContainerBounds();
         if (bounds) {
           callback({
@@ -287,15 +309,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
             y: clientY - bounds.y
           });
         } else {
-          // Last resort: try locationX/locationY
-          if (nativeEvent.locationX !== undefined && nativeEvent.locationY !== undefined) {
-            callback({
-              x: nativeEvent.locationX,
-              y: nativeEvent.locationY
-            });
-          } else {
-            callback({ x: 0, y: 0 });
-          }
+          callback({ x: 0, y: 0 });
         }
       }
     };
@@ -456,17 +470,26 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           }
         }}
         onMouseMove={Platform.OS === 'web' ? (e: any) => {
-          if (dragStart && fieldContainerRef.current) {
+          if (dragStart) {
             const nativeEvent = e.nativeEvent || e;
-            const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX !== undefined ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
-            const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY !== undefined ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
             
-            // Use measureInWindow for fresh bounds on every move
-            fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
-              const x = clientX - winX;
-              const y = clientY - winY;
-              handleMove(x, y);
-            });
+            // PRIORITY 1: Use locationX/locationY (element-relative) - most reliable
+            if (nativeEvent.locationX !== undefined && nativeEvent.locationY !== undefined) {
+              handleMove(nativeEvent.locationX, nativeEvent.locationY);
+              return;
+            }
+            
+            // FALLBACK: Calculate from viewport coordinates
+            if (fieldContainerRef.current) {
+              const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX !== undefined ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
+              const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY !== undefined ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+              
+              fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
+                const x = clientX - winX;
+                const y = clientY - winY;
+                handleMove(x, y);
+              });
+            }
           }
         } : undefined}
         onMouseUp={Platform.OS === 'web' ? () => {
@@ -476,19 +499,34 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           if (dragStart) handleEnd();
         } : undefined}
         onTouchMove={Platform.OS === 'web' ? (e: any) => {
-          if (dragStart && fieldContainerRef.current) {
+          if (dragStart) {
             e.preventDefault();
             const nativeEvent = e.nativeEvent || e;
             const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
-            const clientX = touch?.clientX !== undefined ? touch.clientX : (touch?.pageX !== undefined ? touch.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
-            const clientY = touch?.clientY !== undefined ? touch.clientY : (touch?.pageY !== undefined ? touch.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
             
-            // Use measureInWindow for fresh bounds on every move
-            fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
-              const x = clientX - winX;
-              const y = clientY - winY;
-              handleMove(x, y);
-            });
+            // PRIORITY 1: Use locationX/locationY (element-relative) - most reliable
+            if (nativeEvent.locationX !== undefined && nativeEvent.locationY !== undefined) {
+              handleMove(nativeEvent.locationX, nativeEvent.locationY);
+              return;
+            }
+            
+            // PRIORITY 2: Try locationX/locationY from touch object
+            if (touch && touch.locationX !== undefined && touch.locationY !== undefined) {
+              handleMove(touch.locationX, touch.locationY);
+              return;
+            }
+            
+            // FALLBACK: Calculate from viewport coordinates
+            if (fieldContainerRef.current) {
+              const clientX = touch?.clientX !== undefined ? touch.clientX : (touch?.pageX !== undefined ? touch.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
+              const clientY = touch?.clientY !== undefined ? touch.clientY : (touch?.pageY !== undefined ? touch.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+              
+              fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
+                const x = clientX - winX;
+                const y = clientY - winY;
+                handleMove(x, y);
+              });
+            }
           }
         } : undefined}
         onTouchEnd={Platform.OS === 'web' ? () => {
