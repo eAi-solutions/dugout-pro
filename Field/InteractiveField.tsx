@@ -13,18 +13,18 @@ type PlayerPos = {
 };
 
 const BASE_POSITIONS: PlayerPos[] = [
-  { key: 'P', label: 'P', xPercent: 0.45, yPercent: 0.66, color: '#e74c3c' },      // Pitcher - centered on mound
-  { key: 'C', label: 'C', xPercent: 0.45, yPercent: 0.83, color: '#3498db' },      // Catcher - directly behind home plate
-  { key: '1B', label: '1B', xPercent: 0.61, yPercent: 0.61, color: '#2ecc71' },  // First Baseman - just past 1B base towards home (right side)
-  { key: '2B', label: '2B', xPercent: 0.55, yPercent: 0.50, color: '#f39c12' },   // Second Baseman - between 1B and 2B, closer to 2B
-  { key: '3B', label: '3B', xPercent: 0.31, yPercent: 0.60, color: '#9b59b6' }, // Third Baseman - just past 3B base towards home (left side)
-  { key: 'SS', label: 'SS', xPercent: 0.35, yPercent: 0.50, color: '#1abc9c' },  // Shortstop - between 2B and 3B, closer to 2B
-  { key: 'LF', label: 'LF', xPercent: 0.21, yPercent: 0.36, color: '#34495e' },  // Left Fielder - deep left outfield
-  { key: 'CF', label: 'CF', xPercent: 0.45, yPercent: 0.29, color: '#e67e22' },   // Center Fielder - deep center outfield
-  { key: 'RF', label: 'RF', xPercent: 0.68, yPercent: 0.36, color: '#27ae60' },   // Right Fielder - deep right outfield
+  { key: 'P', label: 'P', xPercent: 0.50, yPercent: 0.66, color: '#e74c3c' },      // Pitcher - centered on mound
+  { key: 'C', label: 'C', xPercent: 0.50, yPercent: 0.83, color: '#3498db' },      // Catcher - directly behind home plate
+  { key: '1B', label: '1B', xPercent: 0.66, yPercent: 0.61, color: '#2ecc71' },  // First Baseman - just past 1B base towards home (right side)
+  { key: '2B', label: '2B', xPercent: 0.60, yPercent: 0.50, color: '#f39c12' },   // Second Baseman - between 1B and 2B, closer to 2B
+  { key: '3B', label: '3B', xPercent: 0.36, yPercent: 0.60, color: '#9b59b6' }, // Third Baseman - just past 3B base towards home (left side)
+  { key: 'SS', label: 'SS', xPercent: 0.40, yPercent: 0.50, color: '#1abc9c' },  // Shortstop - between 2B and 3B, closer to 2B
+  { key: 'LF', label: 'LF', xPercent: 0.26, yPercent: 0.36, color: '#34495e' },  // Left Fielder - deep left outfield
+  { key: 'CF', label: 'CF', xPercent: 0.50, yPercent: 0.29, color: '#e67e22' },   // Center Fielder - deep center outfield
+  { key: 'RF', label: 'RF', xPercent: 0.73, yPercent: 0.36, color: '#27ae60' },   // Right Fielder - deep right outfield
 ];
 
-const BALL_BASE_POS = { xPercent: 0.45, yPercent: 0.70 };
+const BALL_BASE_POS = { xPercent: 0.50, yPercent: 0.70 };
 
 interface InteractiveFieldProps {
   onReset?: () => void;
