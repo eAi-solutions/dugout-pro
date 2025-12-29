@@ -779,8 +779,8 @@ export default function App() {
             <Text style={styles.baseballEmoji}>⚾</Text>
           </View>
           <View style={styles.logoText}>
-            <Text style={styles.appTitle}>Dugout</Text>
-            <Text style={styles.appSubtitle}>Pro</Text>
+            <Text style={styles.appTitle}>Dug⚾ut</Text>
+            <Text style={styles.appSubtitle}>Pr⚾</Text>
           </View>
         </View>
         
@@ -868,7 +868,7 @@ export default function App() {
 
       {/* Footer */}
       <View style={styles.menuFooter}>
-        <Text style={styles.menuFooterText}>by EI-AI</Text>
+        <Text style={styles.menuFooterText}>by eAi-solutions</Text>
       </View>
     </View>
   );
