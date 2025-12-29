@@ -88,6 +88,59 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     return () => subscription?.remove();
   }, []);
 
+  // Attach native DOM event listeners for more reliable coordinate tracking
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !containerDOMRef.current) return;
+
+    const container = containerDOMRef.current;
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      if (dragStart) {
+        const rect = container.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        handleMove(x, y);
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (dragStart) handleEnd();
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (dragStart) {
+        e.preventDefault();
+        const touch = e.touches[0] || e.changedTouches[0];
+        if (touch) {
+          const rect = container.getBoundingClientRect();
+          const x = touch.clientX - rect.left;
+          const y = touch.clientY - rect.top;
+          handleMove(x, y);
+        }
+      }
+    };
+
+    const handleTouchEnd = () => {
+      if (dragStart) handleEnd();
+    };
+
+    container.addEventListener('mousemove', handleMouseMove);
+    container.addEventListener('mouseup', handleMouseUp);
+    container.addEventListener('mouseleave', handleMouseUp);
+    container.addEventListener('touchmove', handleTouchMove, { passive: false });
+    container.addEventListener('touchend', handleTouchEnd);
+    container.addEventListener('touchcancel', handleTouchEnd);
+
+    return () => {
+      container.removeEventListener('mousemove', handleMouseMove);
+      container.removeEventListener('mouseup', handleMouseUp);
+      container.removeEventListener('mouseleave', handleMouseUp);
+      container.removeEventListener('touchmove', handleTouchMove);
+      container.removeEventListener('touchend', handleTouchEnd);
+      container.removeEventListener('touchcancel', handleTouchEnd);
+    };
+  }, [dragStart]);
+
   // Update positions when field size changes - recalculate based on new dimensions
   useEffect(() => {
     if (fieldWidth > 0) {
@@ -271,10 +324,40 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     
     const getRelativeCoords = (e: any, callback: (coords: {x: number, y: number}) => void) => {
       const nativeEvent = e.nativeEvent || e;
+      const originalEvent = e.originalEvent || e;
+      
+      // PRIORITY 1: Use offsetX/offsetY - these are directly relative to the target element
+      // This is the most reliable method as it doesn't require any calculations
+      if (originalEvent && originalEvent.offsetX !== undefined && originalEvent.offsetY !== undefined) {
+        callback({
+          x: originalEvent.offsetX,
+          y: originalEvent.offsetY
+        });
+        return;
+      }
+      
+      // PRIORITY 2: Try offsetX/offsetY from nativeEvent
+      if (nativeEvent.offsetX !== undefined && nativeEvent.offsetY !== undefined) {
+        callback({
+          x: nativeEvent.offsetX,
+          y: nativeEvent.offsetY
+        });
+        return;
+      }
+      
+      // PRIORITY 3: Use layerX/layerY (deprecated but sometimes more reliable)
+      if (originalEvent && originalEvent.layerX !== undefined && originalEvent.layerY !== undefined) {
+        callback({
+          x: originalEvent.layerX,
+          y: originalEvent.layerY
+        });
+        return;
+      }
+      
+      // FALLBACK: Calculate from viewport coordinates
       let clientX = 0;
       let clientY = 0;
       
-      // Get viewport coordinates
       if (nativeEvent.touches || nativeEvent.changedTouches) {
         const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
         clientX = touch.clientX !== undefined ? touch.clientX : (touch.pageX !== undefined ? touch.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
@@ -284,15 +367,13 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY !== undefined ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
       }
       
-      // Use getBoundingClientRect on the cached DOM element for accurate bounds
+      // Use getBoundingClientRect on the cached DOM element
       if (containerDOMRef.current && typeof containerDOMRef.current.getBoundingClientRect === 'function') {
         const rect = containerDOMRef.current.getBoundingClientRect();
-        // Calculate element-relative coordinates
         const x = clientX - rect.left;
         const y = clientY - rect.top;
         callback({ x, y });
       } else if (fieldContainerRef.current) {
-        // Fallback to measureInWindow
         fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
           const x = clientX - winX;
           const y = clientY - winY;
@@ -458,61 +539,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
             });
           }
         }}
-        onMouseMove={Platform.OS === 'web' ? (e: any) => {
-          if (dragStart) {
-            const nativeEvent = e.nativeEvent || e;
-            const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX !== undefined ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
-            const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY !== undefined ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
-            
-            // Use getBoundingClientRect on cached DOM element for accurate bounds
-            if (containerDOMRef.current && typeof containerDOMRef.current.getBoundingClientRect === 'function') {
-              const rect = containerDOMRef.current.getBoundingClientRect();
-              const x = clientX - rect.left;
-              const y = clientY - rect.top;
-              handleMove(x, y);
-            } else if (fieldContainerRef.current) {
-              // Fallback to measureInWindow
-              fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
-                const x = clientX - winX;
-                const y = clientY - winY;
-                handleMove(x, y);
-              });
-            }
-          }
-        } : undefined}
-        onMouseUp={Platform.OS === 'web' ? () => {
-          if (dragStart) handleEnd();
-        } : undefined}
-        onMouseLeave={Platform.OS === 'web' ? () => {
-          if (dragStart) handleEnd();
-        } : undefined}
-        onTouchMove={Platform.OS === 'web' ? (e: any) => {
-          if (dragStart) {
-            e.preventDefault();
-            const nativeEvent = e.nativeEvent || e;
-            const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
-            const clientX = touch?.clientX !== undefined ? touch.clientX : (touch?.pageX !== undefined ? touch.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
-            const clientY = touch?.clientY !== undefined ? touch.clientY : (touch?.pageY !== undefined ? touch.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
-            
-            // Use getBoundingClientRect on cached DOM element for accurate bounds
-            if (containerDOMRef.current && typeof containerDOMRef.current.getBoundingClientRect === 'function') {
-              const rect = containerDOMRef.current.getBoundingClientRect();
-              const x = clientX - rect.left;
-              const y = clientY - rect.top;
-              handleMove(x, y);
-            } else if (fieldContainerRef.current) {
-              // Fallback to measureInWindow
-              fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
-                const x = clientX - winX;
-                const y = clientY - winY;
-                handleMove(x, y);
-              });
-            }
-          }
-        } : undefined}
-        onTouchEnd={Platform.OS === 'web' ? () => {
-          if (dragStart) handleEnd();
-        } : undefined}
+        // Move events are now handled by native DOM listeners in useEffect
       >
         {/* Image-based Baseball Field Background */}
         <BaseballFieldImage width={fieldWidth} height={fieldHeight} />
