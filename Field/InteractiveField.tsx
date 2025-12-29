@@ -266,63 +266,48 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     });
   };
 
-  // Web mouse/touch handlers - use direct DOM element access for accurate coordinates
+  // Web mouse/touch handlers - use consistent coordinate system (always relative to container)
   const getWebHandlers = (key: string, isBall: boolean = false, isRunner: boolean = false) => {
     if (Platform.OS !== 'web') return {};
-    
-    const getRelativeCoords = (e: any, callback: (coords: {x: number, y: number}) => void) => {
+
+    const getRelativeToContainer = (
+      e: any,
+      callback: (coords: { x: number; y: number }) => void
+    ) => {
       const nativeEvent = e.nativeEvent || e;
-      const originalEvent = e.originalEvent || e;
-      
-      // PRIORITY 1: Use offsetX/offsetY - these are directly relative to the target element
-      // This is the most reliable method as it doesn't require any calculations
-      if (originalEvent && originalEvent.offsetX !== undefined && originalEvent.offsetY !== undefined) {
-        callback({
-          x: originalEvent.offsetX,
-          y: originalEvent.offsetY
-        });
-        return;
-      }
-      
-      // PRIORITY 2: Try offsetX/offsetY from nativeEvent
-      if (nativeEvent.offsetX !== undefined && nativeEvent.offsetY !== undefined) {
-        callback({
-          x: nativeEvent.offsetX,
-          y: nativeEvent.offsetY
-        });
-        return;
-      }
-      
-      // PRIORITY 3: Use layerX/layerY (deprecated but sometimes more reliable)
-      if (originalEvent && originalEvent.layerX !== undefined && originalEvent.layerY !== undefined) {
-        callback({
-          x: originalEvent.layerX,
-          y: originalEvent.layerY
-        });
-        return;
-      }
-      
-      // FALLBACK: Calculate from viewport coordinates
+
       let clientX = 0;
       let clientY = 0;
-      
-      if (nativeEvent.touches || nativeEvent.changedTouches) {
-        const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
-        clientX = touch.clientX !== undefined ? touch.clientX : (touch.pageX !== undefined ? touch.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
-        clientY = touch.clientY !== undefined ? touch.clientY : (touch.pageY !== undefined ? touch.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+
+      if (nativeEvent.touches && nativeEvent.touches[0]) {
+        clientX = nativeEvent.touches[0].clientX;
+        clientY = nativeEvent.touches[0].clientY;
+      } else if (nativeEvent.changedTouches && nativeEvent.changedTouches[0]) {
+        clientX = nativeEvent.changedTouches[0].clientX;
+        clientY = nativeEvent.changedTouches[0].clientY;
       } else {
-        clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX !== undefined ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
-        clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY !== undefined ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+        clientX =
+          nativeEvent.clientX !== undefined
+            ? nativeEvent.clientX
+            : nativeEvent.pageX !== undefined
+            ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0)
+            : 0;
+
+        clientY =
+          nativeEvent.clientY !== undefined
+            ? nativeEvent.clientY
+            : nativeEvent.pageY !== undefined
+            ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0)
+            : 0;
       }
-      
-      // Use getBoundingClientRect on the cached DOM element
+
       if (containerDOMRef.current && typeof containerDOMRef.current.getBoundingClientRect === 'function') {
         const rect = containerDOMRef.current.getBoundingClientRect();
         const x = clientX - rect.left;
         const y = clientY - rect.top;
         callback({ x, y });
       } else if (fieldContainerRef.current) {
-        fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
+        fieldContainerRef.current.measureInWindow((winX, winY) => {
           const x = clientX - winX;
           const y = clientY - winY;
           callback({ x, y });
@@ -331,20 +316,20 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         callback({ x: 0, y: 0 });
       }
     };
-    
+
     return {
       onMouseDown: (e: any) => {
         e.preventDefault();
         e.stopPropagation();
-        getRelativeCoords(e, (coords) => {
-          handleStart(key, isBall, isRunner, coords.x, coords.y);
+        getRelativeToContainer(e, ({ x, y }) => {
+          handleStart(key, isBall, isRunner, x, y);
         });
       },
       onTouchStart: (e: any) => {
         e.preventDefault();
         e.stopPropagation();
-        getRelativeCoords(e, (coords) => {
-          handleStart(key, isBall, isRunner, coords.x, coords.y);
+        getRelativeToContainer(e, ({ x, y }) => {
+          handleStart(key, isBall, isRunner, x, y);
         });
       },
     };
@@ -376,7 +361,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           shadowRadius: isDragging ? 5 : 3,
           elevation: isDragging ? 8 : 5,
           transform: [{ scale: isDragging ? 1.1 : 1 }],
-          cursor: Platform.OS === 'web' ? 'pointer' : 'default',
+          cursor: Platform.OS === 'web' ? 'pointer' : undefined,
           zIndex: isDragging ? 1000 : 10,
         }}
         {...(Platform.OS === 'web' ? webHandlers : panResponder.panHandlers)}
@@ -411,7 +396,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           shadowRadius: isDragging ? 4 : 2,
           elevation: isDragging ? 6 : 3,
           transform: [{ scale: isDragging ? 1.2 : 1 }],
-          cursor: Platform.OS === 'web' ? 'pointer' : 'default',
+          cursor: Platform.OS === 'web' ? 'pointer' : undefined,
           zIndex: isDragging ? 1000 : 10,
         }}
         {...(Platform.OS === 'web' ? webHandlers : panResponder.panHandlers)}
@@ -447,7 +432,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           shadowRadius: isDragging ? 5 : 3,
           elevation: isDragging ? 8 : 5,
           transform: [{ scale: isDragging ? 1.1 : 1 }],
-          cursor: Platform.OS === 'web' ? 'pointer' : 'default',
+          cursor: Platform.OS === 'web' ? 'pointer' : undefined,
           zIndex: isDragging ? 1000 : 10,
         }}
         {...(Platform.OS === 'web' ? webHandlers : panResponder.panHandlers)}
