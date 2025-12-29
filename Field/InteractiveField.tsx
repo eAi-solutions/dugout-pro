@@ -137,8 +137,8 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         if (element && element.getBoundingClientRect) {
           const rect = element.getBoundingClientRect();
           return {
-            x: rect.left,
-            y: rect.top,
+            x: rect.left + (window.scrollX || 0),
+            y: rect.top + (window.scrollY || 0),
             width: rect.width,
             height: rect.height
           };
@@ -147,7 +147,17 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         // Fallback to containerLayout if getBoundingClientRect fails
       }
     }
-    return containerLayout;
+    // For mobile/native, use containerLayout which should be accurate
+    // But account for any parent padding
+    if (containerLayout) {
+      return {
+        ...containerLayout,
+        // Ensure we're using the exact container position
+        x: containerLayout.x,
+        y: containerLayout.y
+      };
+    }
+    return null;
   };
 
   const handleStart = (key: string, isBall: boolean, isRunner: boolean, startX: number, startY: number) => {
@@ -397,7 +407,8 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           alignSelf: 'center', 
           marginVertical: 20, 
           position: 'relative',
-          maxWidth: '100%'
+          maxWidth: '100%',
+          overflow: 'hidden'
         }}
         onLayout={(e) => {
           const { x, y, width, height } = e.nativeEvent.layout;

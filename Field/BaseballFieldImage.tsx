@@ -11,22 +11,18 @@ export default function BaseballFieldImage({ width, height }: BaseballFieldImage
   const imageHeight = height || imageWidth; // Keep it square
 
   return (
-    <View style={styles.container}>
-      <Image
-        source={require('../assets/baseball-field.png')}
-        style={[styles.fieldImage, { width: imageWidth, height: imageHeight }]}
-        resizeMode="contain"
-      />
-    </View>
+    <Image
+      source={require('../assets/baseball-field.png')}
+      style={[styles.fieldImage, { width: imageWidth, height: imageHeight }]}
+      resizeMode="cover"
+    />
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   fieldImage: {
-    // Image will fill the container
+    position: 'absolute',
+    top: 0,
+    left: 0,
   },
 });
