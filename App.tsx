@@ -820,7 +820,7 @@ export default function App() {
         {/* Logo */}
         <View style={styles.logoContainer}>
           <View style={styles.baseball}>
-            <Text style={styles.baseballEmoji}>o</Text>
+            <Text style={styles.baseballEmoji}>⚾</Text>
           </View>
           <View style={styles.logoText}>
             <Text style={styles.appTitle}>Dugout</Text>
@@ -859,6 +859,11 @@ export default function App() {
       
       {/* Header */}
       <View style={styles.menuHeader}>
+        <View style={styles.menuLogoContainer}>
+          <View style={styles.menuBaseball}>
+            <Text style={styles.menuBaseballEmoji}>⚾</Text>
+          </View>
+        </View>
         <Text style={styles.menuTitle}>Dugout Pro</Text>
         <Text style={styles.menuSubtitle}>Choose your activity</Text>
       </View>
@@ -1703,6 +1708,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 40,
     paddingHorizontal: 20,
+  },
+  menuLogoContainer: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  menuBaseball: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  menuBaseballEmoji: {
+    fontSize: 40,
   },
   menuTitle: {
     fontSize: 32,
