@@ -11,7 +11,8 @@ import {
   Alert,
   Platform,
   Dimensions,
-  Animated
+  Animated,
+  Image
 } from 'react-native';
 import { baseballDrills, Drill, PracticePlan } from './Data/Models/baseballDrills';
 import BaseballField from './Field/BaseballField';
@@ -895,7 +896,11 @@ export default function App() {
           }}
         >
           <View style={styles.menuOptionIcon}>
-            <Text style={styles.menuIcon}>o</Text>
+            <Image 
+              source={require('./assets/baseball-field.png')}
+              style={styles.fieldIconImage}
+              resizeMode="contain"
+            />
           </View>
           <View style={styles.menuOptionContent}>
             <Text style={styles.menuOptionTitle}>Field Diagram</Text>
@@ -1740,9 +1745,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 15,
+    overflow: 'hidden',
   },
   menuIcon: {
     fontSize: 28,
+  },
+  fieldIconImage: {
+    width: 50,
+    height: 50,
   },
   menuOptionContent: {
     flex: 1,
