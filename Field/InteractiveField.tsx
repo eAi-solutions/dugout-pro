@@ -88,58 +88,6 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     return () => subscription?.remove();
   }, []);
 
-  // Attach native DOM event listeners for more reliable coordinate tracking
-  useEffect(() => {
-    if (Platform.OS !== 'web' || !containerDOMRef.current) return;
-
-    const container = containerDOMRef.current;
-    
-    const handleMouseMove = (e: MouseEvent) => {
-      if (dragStart) {
-        const rect = container.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        handleMove(x, y);
-      }
-    };
-
-    const handleMouseUp = () => {
-      if (dragStart) handleEnd();
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      if (dragStart) {
-        e.preventDefault();
-        const touch = e.touches[0] || e.changedTouches[0];
-        if (touch) {
-          const rect = container.getBoundingClientRect();
-          const x = touch.clientX - rect.left;
-          const y = touch.clientY - rect.top;
-          handleMove(x, y);
-        }
-      }
-    };
-
-    const handleTouchEnd = () => {
-      if (dragStart) handleEnd();
-    };
-
-    container.addEventListener('mousemove', handleMouseMove);
-    container.addEventListener('mouseup', handleMouseUp);
-    container.addEventListener('mouseleave', handleMouseUp);
-    container.addEventListener('touchmove', handleTouchMove, { passive: false });
-    container.addEventListener('touchend', handleTouchEnd);
-    container.addEventListener('touchcancel', handleTouchEnd);
-
-    return () => {
-      container.removeEventListener('mousemove', handleMouseMove);
-      container.removeEventListener('mouseup', handleMouseUp);
-      container.removeEventListener('mouseleave', handleMouseUp);
-      container.removeEventListener('touchmove', handleTouchMove);
-      container.removeEventListener('touchend', handleTouchEnd);
-      container.removeEventListener('touchcancel', handleTouchEnd);
-    };
-  }, [dragStart]);
 
   // Update positions when field size changes - recalculate based on new dimensions
   useEffect(() => {
@@ -428,7 +376,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           shadowRadius: isDragging ? 5 : 3,
           elevation: isDragging ? 8 : 5,
           transform: [{ scale: isDragging ? 1.1 : 1 }],
-          cursor: Platform.OS === 'web' ? 'grab' : 'default',
+          cursor: Platform.OS === 'web' ? 'pointer' : 'default',
           zIndex: isDragging ? 1000 : 10,
         }}
         {...(Platform.OS === 'web' ? webHandlers : panResponder.panHandlers)}
@@ -463,7 +411,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           shadowRadius: isDragging ? 4 : 2,
           elevation: isDragging ? 6 : 3,
           transform: [{ scale: isDragging ? 1.2 : 1 }],
-          cursor: Platform.OS === 'web' ? 'grab' : 'default',
+          cursor: Platform.OS === 'web' ? 'pointer' : 'default',
           zIndex: isDragging ? 1000 : 10,
         }}
         {...(Platform.OS === 'web' ? webHandlers : panResponder.panHandlers)}
@@ -499,7 +447,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           shadowRadius: isDragging ? 5 : 3,
           elevation: isDragging ? 8 : 5,
           transform: [{ scale: isDragging ? 1.1 : 1 }],
-          cursor: Platform.OS === 'web' ? 'grab' : 'default',
+          cursor: Platform.OS === 'web' ? 'pointer' : 'default',
           zIndex: isDragging ? 1000 : 10,
         }}
         {...(Platform.OS === 'web' ? webHandlers : panResponder.panHandlers)}
@@ -539,7 +487,56 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
             });
           }
         }}
-        // Move events are now handled by native DOM listeners in useEffect
+        {...(Platform.OS === 'web' ? {
+          // @ts-ignore - React Native Web supports these
+          onMouseMove: (e: any) => {
+            if (dragStart) {
+              const nativeEvent = e.nativeEvent || e;
+              const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX !== undefined ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
+              const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY !== undefined ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+              
+              if (containerDOMRef.current && typeof containerDOMRef.current.getBoundingClientRect === 'function') {
+                const rect = containerDOMRef.current.getBoundingClientRect();
+                handleMove(clientX - rect.left, clientY - rect.top);
+              } else if (fieldContainerRef.current) {
+                fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
+                  handleMove(clientX - winX, clientY - winY);
+                });
+              }
+            }
+          },
+          // @ts-ignore
+          onMouseUp: () => {
+            if (dragStart) handleEnd();
+          },
+          // @ts-ignore
+          onMouseLeave: () => {
+            if (dragStart) handleEnd();
+          },
+          // @ts-ignore
+          onTouchMove: (e: any) => {
+            if (dragStart) {
+              e.preventDefault();
+              const nativeEvent = e.nativeEvent || e;
+              const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
+              const clientX = touch?.clientX !== undefined ? touch.clientX : (touch?.pageX !== undefined ? touch.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
+              const clientY = touch?.clientY !== undefined ? touch.clientY : (touch?.pageY !== undefined ? touch.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+              
+              if (containerDOMRef.current && typeof containerDOMRef.current.getBoundingClientRect === 'function') {
+                const rect = containerDOMRef.current.getBoundingClientRect();
+                handleMove(clientX - rect.left, clientY - rect.top);
+              } else if (fieldContainerRef.current) {
+                fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
+                  handleMove(clientX - winX, clientY - winY);
+                });
+              }
+            }
+          },
+          // @ts-ignore
+          onTouchEnd: () => {
+            if (dragStart) handleEnd();
+          }
+        } : {})}
       >
         {/* Image-based Baseball Field Background */}
         <BaseballFieldImage width={fieldWidth} height={fieldHeight} />
