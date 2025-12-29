@@ -22,9 +22,11 @@ export default function BaseballFieldImage({ width, height }: BaseballFieldImage
 }
 
 const styles = StyleSheet.create({
+  container: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   fieldImage: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
+    // Image will fill the container
   },
 });

@@ -235,24 +235,41 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     const getRelativeCoords = (e: any) => {
       const bounds = getContainerBounds();
       if (bounds) {
-        // Use clientX/clientY (viewport-relative) instead of pageX/pageY (document-relative)
-        // This fixes the issue on mobile where scroll position affects coordinates
         const nativeEvent = e.nativeEvent || e;
-        const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.touches?.[0]?.clientX || nativeEvent.changedTouches?.[0]?.clientX);
-        const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.touches?.[0]?.clientY || nativeEvent.changedTouches?.[0]?.clientY);
         
-        if (clientX !== undefined && clientY !== undefined) {
-          return {
-            x: clientX - bounds.x,
-            y: clientY - bounds.y
-          };
+        // Detect if this is a touch event (mobile)
+        const isTouch = nativeEvent.touches || nativeEvent.changedTouches;
+        
+        if (isTouch) {
+          // For mobile/touch: use clientX/clientY (viewport-relative) to fix scroll offset issues
+          const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
+          const clientX = touch.clientX !== undefined ? touch.clientX : (touch.pageX || 0);
+          const clientY = touch.clientY !== undefined ? touch.clientY : (touch.pageY || 0);
+          
+          if (clientX !== undefined && clientY !== undefined) {
+            return {
+              x: clientX - bounds.x,
+              y: clientY - bounds.y
+            };
+          }
+        } else {
+          // For desktop/mouse: use pageX/pageY (document-relative) which works correctly
+          const pageX = nativeEvent.pageX !== undefined ? nativeEvent.pageX : (nativeEvent.clientX || 0);
+          const pageY = nativeEvent.pageY !== undefined ? nativeEvent.pageY : (nativeEvent.clientY || 0);
+          
+          if (pageX !== undefined && pageY !== undefined) {
+            return {
+              x: pageX - bounds.x,
+              y: pageY - bounds.y
+            };
+          }
         }
       }
-      // Fallback to locationX/locationY or pageX/pageY
+      // Fallback to locationX/locationY
       const nativeEvent = e.nativeEvent || e;
       return {
-        x: nativeEvent.locationX || nativeEvent.clientX || nativeEvent.pageX || 0,
-        y: nativeEvent.locationY || nativeEvent.clientY || nativeEvent.pageY || 0
+        x: nativeEvent.locationX || nativeEvent.pageX || nativeEvent.clientX || 0,
+        y: nativeEvent.locationY || nativeEvent.pageY || nativeEvent.clientY || 0
       };
     };
     
@@ -408,10 +425,11 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
             const bounds = getContainerBounds();
             if (bounds) {
               const nativeEvent = e.nativeEvent || e;
-              const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : 0;
-              const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : 0;
-              const x = clientX - bounds.x;
-              const y = clientY - bounds.y;
+              // For desktop mouse: use pageX/pageY
+              const pageX = nativeEvent.pageX !== undefined ? nativeEvent.pageX : (nativeEvent.clientX || 0);
+              const pageY = nativeEvent.pageY !== undefined ? nativeEvent.pageY : (nativeEvent.clientY || 0);
+              const x = pageX - bounds.x;
+              const y = pageY - bounds.y;
               handleMove(x, y);
             }
           }
@@ -428,6 +446,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
             const bounds = getContainerBounds();
             if (bounds) {
               const touch = e.nativeEvent?.touches?.[0] || e.nativeEvent?.changedTouches?.[0] || e.nativeEvent;
+              // For mobile touch: use clientX/clientY to account for scroll
               const clientX = touch.clientX !== undefined ? touch.clientX : (touch.pageX || 0);
               const clientY = touch.clientY !== undefined ? touch.clientY : (touch.pageY || 0);
               const x = clientX - bounds.x;
