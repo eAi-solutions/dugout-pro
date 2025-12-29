@@ -232,46 +232,58 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     });
   };
 
-  // Web mouse/touch handlers - use nativeEvent coordinates
+  // Web mouse/touch handlers - use React Native's locationX/locationY for element-relative coordinates
   const getWebHandlers = (key: string, isBall: boolean = false, isRunner: boolean = false) => {
     if (Platform.OS !== 'web') return {};
     
     const getRelativeCoords = (e: any) => {
-      const bounds = getContainerBounds();
-      if (!bounds) {
-        // Final fallback
-        const nativeEvent = e.nativeEvent || e;
+      const nativeEvent = e.nativeEvent || e;
+      
+      // React Native provides locationX/locationY which are relative to the element
+      // This is the most reliable method as it doesn't depend on browser coordinate systems
+      if (nativeEvent.locationX !== undefined && nativeEvent.locationY !== undefined) {
         return {
-          x: nativeEvent.locationX || nativeEvent.clientX || nativeEvent.pageX || 0,
-          y: nativeEvent.locationY || nativeEvent.clientY || nativeEvent.pageY || 0
+          x: nativeEvent.locationX,
+          y: nativeEvent.locationY
         };
       }
       
-      const nativeEvent = e.nativeEvent || e;
-      
-      // Always use getBoundingClientRect() for bounds (viewport-relative)
-      // For coordinates, use clientX/clientY (also viewport-relative) for consistency
-      // This should work across all browsers since both are viewport-relative
-      let clientX = 0;
-      let clientY = 0;
-      
-      // Get coordinates from the event
+      // Fallback: try to get locationX/locationY from touch events
       if (nativeEvent.touches || nativeEvent.changedTouches) {
-        // Touch event
-        const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
-        clientX = touch.clientX !== undefined ? touch.clientX : (touch.pageX || 0);
-        clientY = touch.clientY !== undefined ? touch.clientY : (touch.pageY || 0);
-      } else {
-        // Mouse event
-        clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX || 0);
-        clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY || 0);
+        const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0];
+        if (touch && touch.locationX !== undefined && touch.locationY !== undefined) {
+          return {
+            x: touch.locationX,
+            y: touch.locationY
+          };
+        }
       }
       
-      // Both bounds (from getBoundingClientRect) and clientX/clientY are viewport-relative
-      // So the calculation should be consistent across all browsers
+      // Last resort: use getBoundingClientRect with clientX/clientY
+      const bounds = getContainerBounds();
+      if (bounds) {
+        let clientX = 0;
+        let clientY = 0;
+        
+        if (nativeEvent.touches || nativeEvent.changedTouches) {
+          const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
+          clientX = touch.clientX !== undefined ? touch.clientX : (touch.pageX || 0);
+          clientY = touch.clientY !== undefined ? touch.clientY : (touch.pageY || 0);
+        } else {
+          clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX || 0);
+          clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY || 0);
+        }
+        
+        return {
+          x: clientX - bounds.x,
+          y: clientY - bounds.y
+        };
+      }
+      
+      // Final fallback
       return {
-        x: clientX - bounds.x,
-        y: clientY - bounds.y
+        x: nativeEvent.clientX || nativeEvent.pageX || 0,
+        y: nativeEvent.clientY || nativeEvent.pageY || 0
       };
     };
     
@@ -424,17 +436,25 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         }}
         onMouseMove={Platform.OS === 'web' ? (e: any) => {
           if (dragStart) {
-            const bounds = getContainerBounds();
-            if (bounds) {
-              const nativeEvent = e.nativeEvent || e;
-              // Use clientX/clientY (viewport-relative) for consistency across all browsers
-              // getBoundingClientRect() is also viewport-relative, so they match
-              const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX || 0);
-              const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY || 0);
-              const x = clientX - bounds.x;
-              const y = clientY - bounds.y;
-              handleMove(x, y);
+            const nativeEvent = e.nativeEvent || e;
+            // Prefer locationX/locationY (element-relative) for consistency
+            let x = 0;
+            let y = 0;
+            
+            if (nativeEvent.locationX !== undefined && nativeEvent.locationY !== undefined) {
+              x = nativeEvent.locationX;
+              y = nativeEvent.locationY;
+            } else {
+              // Fallback to bounds calculation
+              const bounds = getContainerBounds();
+              if (bounds) {
+                const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX || 0);
+                const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY || 0);
+                x = clientX - bounds.x;
+                y = clientY - bounds.y;
+              }
             }
+            handleMove(x, y);
           }
         } : undefined}
         onMouseUp={Platform.OS === 'web' ? () => {
@@ -446,16 +466,32 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         onTouchMove={Platform.OS === 'web' ? (e: any) => {
           if (dragStart) {
             e.preventDefault();
-            const bounds = getContainerBounds();
-            if (bounds) {
-              const touch = e.nativeEvent?.touches?.[0] || e.nativeEvent?.changedTouches?.[0] || e.nativeEvent;
-              // For mobile touch: use clientX/clientY to account for scroll
-              const clientX = touch.clientX !== undefined ? touch.clientX : (touch.pageX || 0);
-              const clientY = touch.clientY !== undefined ? touch.clientY : (touch.pageY || 0);
-              const x = clientX - bounds.x;
-              const y = clientY - bounds.y;
-              handleMove(x, y);
+            const nativeEvent = e.nativeEvent || e;
+            // Prefer locationX/locationY (element-relative) for consistency
+            let x = 0;
+            let y = 0;
+            
+            if (nativeEvent.locationX !== undefined && nativeEvent.locationY !== undefined) {
+              x = nativeEvent.locationX;
+              y = nativeEvent.locationY;
+            } else {
+              // Try from touch object
+              const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0];
+              if (touch && touch.locationX !== undefined && touch.locationY !== undefined) {
+                x = touch.locationX;
+                y = touch.locationY;
+              } else {
+                // Fallback to bounds calculation
+                const bounds = getContainerBounds();
+                if (bounds) {
+                  const clientX = touch?.clientX !== undefined ? touch.clientX : (touch?.pageX || 0);
+                  const clientY = touch?.clientY !== undefined ? touch.clientY : (touch?.pageY || 0);
+                  x = clientX - bounds.x;
+                  y = clientY - bounds.y;
+                }
+              }
             }
+            handleMove(x, y);
           }
         } : undefined}
         onTouchEnd={Platform.OS === 'web' ? () => {
