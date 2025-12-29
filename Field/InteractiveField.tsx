@@ -126,14 +126,25 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
 
   const fieldContainerRef = useRef<View>(null);
   const [containerLayout, setContainerLayout] = useState<{x: number, y: number, width: number, height: number} | null>(null);
+  const [containerWindowLayout, setContainerWindowLayout] = useState<{x: number, y: number, width: number, height: number} | null>(null);
   const [dragStart, setDragStart] = useState<{x: number, y: number, key: string, isBall: boolean, isRunner: boolean} | null>(null);
 
   // Get container's bounding rect for accurate positioning across all browsers
-  // Always use getBoundingClientRect() for web as it gives absolute viewport coordinates
+  // Use measureInWindow for React Native (works on web too) which gives window-relative coordinates
   const getContainerBounds = (): {x: number, y: number, width: number, height: number} | null => {
+    // Prefer window layout from measureInWindow as it's most reliable
+    if (containerWindowLayout) {
+      return containerWindowLayout;
+    }
+    
+    // Fallback to onLayout if measureInWindow hasn't been called yet
+    if (containerLayout) {
+      return containerLayout;
+    }
+    
+    // Last resort: try getBoundingClientRect on web
     if (Platform.OS === 'web' && fieldContainerRef.current) {
       try {
-        // Access the underlying DOM element - React Native Web stores it in different places
         // @ts-ignore - accessing DOM element
         let element = fieldContainerRef.current._nativeNode;
         if (!element) {
@@ -145,21 +156,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           element = fieldContainerRef.current;
         }
         
-        // Try to find the actual DOM element
         if (element && typeof element.getBoundingClientRect === 'function') {
-          const rect = element.getBoundingClientRect();
-          // getBoundingClientRect() returns viewport-relative coordinates
-          // This is the most reliable method across all browsers
-          return {
-            x: rect.left,
-            y: rect.top,
-            width: rect.width,
-            height: rect.height
-          };
-        }
-        
-        // If getBoundingClientRect is not available, try to find the actual DOM node
-        if (element && element.nodeType === 1) {
           const rect = element.getBoundingClientRect();
           return {
             x: rect.left,
@@ -169,12 +166,11 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           };
         }
       } catch (e) {
-        // Fallback to containerLayout if getBoundingClientRect fails
-        console.warn('getBoundingClientRect failed, using layout:', e);
+        // Silently fail and return null
       }
     }
-    // For native platforms or fallback, use containerLayout
-    return containerLayout;
+    
+    return null;
   };
 
   const handleStart = (key: string, isBall: boolean, isRunner: boolean, startX: number, startY: number) => {
@@ -255,67 +251,69 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     });
   };
 
-  // Web mouse/touch handlers - use getBoundingClientRect for accurate cross-browser coordinates
+  // Web mouse/touch handlers - use measureInWindow for accurate cross-browser coordinates
   const getWebHandlers = (key: string, isBall: boolean = false, isRunner: boolean = false) => {
     if (Platform.OS !== 'web') return {};
     
-    const getRelativeCoords = (e: any) => {
+    const getRelativeCoords = (e: any, callback: (coords: {x: number, y: number}) => void) => {
       const nativeEvent = e.nativeEvent || e;
       
-      // Always use getBoundingClientRect for web to ensure cross-browser consistency
-      // This accounts for scroll position, container position, and viewport differences
-      const bounds = getContainerBounds();
-      if (bounds) {
-        let clientX = 0;
-        let clientY = 0;
-        
-        // Get viewport coordinates from the event
-        if (nativeEvent.touches || nativeEvent.changedTouches) {
-          const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
-          // Use clientX/clientY (viewport-relative) for consistency across browsers
-          clientX = touch.clientX !== undefined ? touch.clientX : (touch.pageX !== undefined ? touch.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
-          clientY = touch.clientY !== undefined ? touch.clientY : (touch.pageY !== undefined ? touch.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+      // Get viewport coordinates from the event
+      let clientX = 0;
+      let clientY = 0;
+      
+      if (nativeEvent.touches || nativeEvent.changedTouches) {
+        const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
+        clientX = touch.clientX !== undefined ? touch.clientX : (touch.pageX !== undefined ? touch.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
+        clientY = touch.clientY !== undefined ? touch.clientY : (touch.pageY !== undefined ? touch.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+      } else {
+        clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX !== undefined ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
+        clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY !== undefined ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+      }
+      
+      // Use measureInWindow to get fresh bounds on every event for accuracy
+      if (fieldContainerRef.current) {
+        fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
+          const x = clientX - winX;
+          const y = clientY - winY;
+          callback({ x, y });
+        });
+      } else {
+        // Fallback to cached bounds
+        const bounds = getContainerBounds();
+        if (bounds) {
+          callback({
+            x: clientX - bounds.x,
+            y: clientY - bounds.y
+          });
         } else {
-          // Mouse events - use clientX/clientY (viewport-relative)
-          clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX !== undefined ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
-          clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY !== undefined ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+          // Last resort: try locationX/locationY
+          if (nativeEvent.locationX !== undefined && nativeEvent.locationY !== undefined) {
+            callback({
+              x: nativeEvent.locationX,
+              y: nativeEvent.locationY
+            });
+          } else {
+            callback({ x: 0, y: 0 });
+          }
         }
-        
-        // Calculate element-relative coordinates
-        return {
-          x: clientX - bounds.x,
-          y: clientY - bounds.y
-        };
       }
-      
-      // Fallback: try React Native's locationX/locationY if available
-      if (nativeEvent.locationX !== undefined && nativeEvent.locationY !== undefined) {
-        return {
-          x: nativeEvent.locationX,
-          y: nativeEvent.locationY
-        };
-      }
-      
-      // Final fallback
-      return {
-        x: 0,
-        y: 0
-      };
     };
     
     return {
       onMouseDown: (e: any) => {
         e.preventDefault();
         e.stopPropagation();
-        const coords = getRelativeCoords(e);
-        handleStart(key, isBall, isRunner, coords.x, coords.y);
+        getRelativeCoords(e, (coords) => {
+          handleStart(key, isBall, isRunner, coords.x, coords.y);
+        });
       },
       onTouchStart: (e: any) => {
         e.preventDefault();
         e.stopPropagation();
-        const touch = e.nativeEvent?.touches?.[0] || e.nativeEvent?.changedTouches?.[0] || e.nativeEvent;
-        const coords = getRelativeCoords(touch);
-        handleStart(key, isBall, isRunner, coords.x, coords.y);
+        getRelativeCoords(e, (coords) => {
+          handleStart(key, isBall, isRunner, coords.x, coords.y);
+        });
       },
     };
   };
@@ -449,20 +447,26 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         onLayout={(e) => {
           const { x, y, width, height } = e.nativeEvent.layout;
           setContainerLayout({ x, y, width, height });
+          
+          // Also measure in window for accurate cross-browser coordinates
+          if (fieldContainerRef.current) {
+            fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
+              setContainerWindowLayout({ x: winX, y: winY, width: winWidth, height: winHeight });
+            });
+          }
         }}
         onMouseMove={Platform.OS === 'web' ? (e: any) => {
-          if (dragStart) {
+          if (dragStart && fieldContainerRef.current) {
             const nativeEvent = e.nativeEvent || e;
-            // Always use getBoundingClientRect for consistent cross-browser coordinates
-            const bounds = getContainerBounds();
-            if (bounds) {
-              // Use clientX/clientY (viewport-relative) for consistency
-              const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX !== undefined ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
-              const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY !== undefined ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
-              const x = clientX - bounds.x;
-              const y = clientY - bounds.y;
+            const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX !== undefined ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
+            const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY !== undefined ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+            
+            // Use measureInWindow for fresh bounds on every move
+            fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
+              const x = clientX - winX;
+              const y = clientY - winY;
               handleMove(x, y);
-            }
+            });
           }
         } : undefined}
         onMouseUp={Platform.OS === 'web' ? () => {
@@ -472,20 +476,19 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           if (dragStart) handleEnd();
         } : undefined}
         onTouchMove={Platform.OS === 'web' ? (e: any) => {
-          if (dragStart) {
+          if (dragStart && fieldContainerRef.current) {
             e.preventDefault();
             const nativeEvent = e.nativeEvent || e;
-            // Always use getBoundingClientRect for consistent cross-browser coordinates
-            const bounds = getContainerBounds();
-            if (bounds) {
-              const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
-              // Use clientX/clientY (viewport-relative) for consistency across browsers
-              const clientX = touch?.clientX !== undefined ? touch.clientX : (touch?.pageX !== undefined ? touch.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
-              const clientY = touch?.clientY !== undefined ? touch.clientY : (touch?.pageY !== undefined ? touch.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
-              const x = clientX - bounds.x;
-              const y = clientY - bounds.y;
+            const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
+            const clientX = touch?.clientX !== undefined ? touch.clientX : (touch?.pageX !== undefined ? touch.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
+            const clientY = touch?.clientY !== undefined ? touch.clientY : (touch?.pageY !== undefined ? touch.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+            
+            // Use measureInWindow for fresh bounds on every move
+            fieldContainerRef.current.measureInWindow((winX, winY, winWidth, winHeight) => {
+              const x = clientX - winX;
+              const y = clientY - winY;
               handleMove(x, y);
-            }
+            });
           }
         } : undefined}
         onTouchEnd={Platform.OS === 'web' ? () => {
