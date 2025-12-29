@@ -129,6 +129,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const [dragStart, setDragStart] = useState<{x: number, y: number, key: string, isBall: boolean, isRunner: boolean} | null>(null);
 
   // Get container's bounding rect for accurate positioning across all browsers
+  // Always use getBoundingClientRect() for web as it gives absolute viewport coordinates
   const getContainerBounds = (): {x: number, y: number, width: number, height: number} | null => {
     if (Platform.OS === 'web' && fieldContainerRef.current) {
       try {
@@ -137,7 +138,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         if (element && element.getBoundingClientRect) {
           const rect = element.getBoundingClientRect();
           // getBoundingClientRect() returns viewport-relative coordinates
-          // We use clientX/clientY (also viewport-relative) for consistency across all browsers
+          // This is the most reliable method across all browsers
           return {
             x: rect.left,
             y: rect.top,
@@ -149,7 +150,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         // Fallback to containerLayout if getBoundingClientRect fails
       }
     }
-    // For native platforms, use containerLayout
+    // For native platforms or fallback, use containerLayout
     return containerLayout;
   };
 
@@ -237,33 +238,40 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     
     const getRelativeCoords = (e: any) => {
       const bounds = getContainerBounds();
-      if (bounds) {
+      if (!bounds) {
+        // Final fallback
         const nativeEvent = e.nativeEvent || e;
-        
-        // Use viewport-relative coordinates (clientX/clientY) for all browsers
-        // This works consistently across MacBook Pro Chrome, PC Chrome, PC Edge, and mobile
-        // getBoundingClientRect() also returns viewport-relative coordinates, so they match
-        const clientX = nativeEvent.clientX !== undefined 
-          ? nativeEvent.clientX 
-          : (nativeEvent.touches?.[0]?.clientX || nativeEvent.changedTouches?.[0]?.clientX || nativeEvent.pageX || 0);
-        const clientY = nativeEvent.clientY !== undefined 
-          ? nativeEvent.clientY 
-          : (nativeEvent.touches?.[0]?.clientY || nativeEvent.changedTouches?.[0]?.clientY || nativeEvent.pageY || 0);
-        
-        if (clientX !== undefined && clientY !== undefined) {
-          // Both clientX/clientY and getBoundingClientRect() are viewport-relative
-          // This ensures consistent behavior across all browsers and platforms
-          return {
-            x: clientX - bounds.x,
-            y: clientY - bounds.y
-          };
-        }
+        return {
+          x: nativeEvent.locationX || nativeEvent.clientX || nativeEvent.pageX || 0,
+          y: nativeEvent.locationY || nativeEvent.clientY || nativeEvent.pageY || 0
+        };
       }
-      // Fallback to locationX/locationY or other coordinate systems
+      
       const nativeEvent = e.nativeEvent || e;
+      
+      // Always use getBoundingClientRect() for bounds (viewport-relative)
+      // For coordinates, use clientX/clientY (also viewport-relative) for consistency
+      // This should work across all browsers since both are viewport-relative
+      let clientX = 0;
+      let clientY = 0;
+      
+      // Get coordinates from the event
+      if (nativeEvent.touches || nativeEvent.changedTouches) {
+        // Touch event
+        const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
+        clientX = touch.clientX !== undefined ? touch.clientX : (touch.pageX || 0);
+        clientY = touch.clientY !== undefined ? touch.clientY : (touch.pageY || 0);
+      } else {
+        // Mouse event
+        clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX || 0);
+        clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY || 0);
+      }
+      
+      // Both bounds (from getBoundingClientRect) and clientX/clientY are viewport-relative
+      // So the calculation should be consistent across all browsers
       return {
-        x: nativeEvent.locationX || nativeEvent.clientX || nativeEvent.pageX || 0,
-        y: nativeEvent.locationY || nativeEvent.clientY || nativeEvent.pageY || 0
+        x: clientX - bounds.x,
+        y: clientY - bounds.y
       };
     };
     
