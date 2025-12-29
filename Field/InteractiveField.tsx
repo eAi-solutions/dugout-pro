@@ -128,6 +128,28 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const [containerLayout, setContainerLayout] = useState<{x: number, y: number, width: number, height: number} | null>(null);
   const [dragStart, setDragStart] = useState<{x: number, y: number, key: string, isBall: boolean, isRunner: boolean} | null>(null);
 
+  // Get container's bounding rect for accurate positioning (especially on mobile)
+  const getContainerBounds = (): {x: number, y: number, width: number, height: number} | null => {
+    if (Platform.OS === 'web' && fieldContainerRef.current) {
+      try {
+        // @ts-ignore - accessing DOM element
+        const element = fieldContainerRef.current._nativeNode || fieldContainerRef.current;
+        if (element && element.getBoundingClientRect) {
+          const rect = element.getBoundingClientRect();
+          return {
+            x: rect.left,
+            y: rect.top,
+            width: rect.width,
+            height: rect.height
+          };
+        }
+      } catch (e) {
+        // Fallback to containerLayout if getBoundingClientRect fails
+      }
+    }
+    return containerLayout;
+  };
+
   const handleStart = (key: string, isBall: boolean, isRunner: boolean, startX: number, startY: number) => {
     if (isBall) {
       setDraggedBall(true);
@@ -211,21 +233,26 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     if (Platform.OS !== 'web') return {};
     
     const getRelativeCoords = (e: any) => {
-      if (containerLayout) {
-        // For web, try to get coordinates relative to container
+      const bounds = getContainerBounds();
+      if (bounds) {
+        // Use clientX/clientY (viewport-relative) instead of pageX/pageY (document-relative)
+        // This fixes the issue on mobile where scroll position affects coordinates
         const nativeEvent = e.nativeEvent || e;
-        if (nativeEvent.pageX !== undefined && nativeEvent.pageY !== undefined) {
+        const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.touches?.[0]?.clientX || nativeEvent.changedTouches?.[0]?.clientX);
+        const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.touches?.[0]?.clientY || nativeEvent.changedTouches?.[0]?.clientY);
+        
+        if (clientX !== undefined && clientY !== undefined) {
           return {
-            x: nativeEvent.pageX - containerLayout.x,
-            y: nativeEvent.pageY - containerLayout.y
+            x: clientX - bounds.x,
+            y: clientY - bounds.y
           };
         }
       }
-      // Fallback to locationX/locationY
+      // Fallback to locationX/locationY or pageX/pageY
       const nativeEvent = e.nativeEvent || e;
       return {
-        x: nativeEvent.locationX || nativeEvent.pageX || 0,
-        y: nativeEvent.locationY || nativeEvent.pageY || 0
+        x: nativeEvent.locationX || nativeEvent.clientX || nativeEvent.pageX || 0,
+        y: nativeEvent.locationY || nativeEvent.clientY || nativeEvent.pageY || 0
       };
     };
     
@@ -377,13 +404,16 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           setContainerLayout({ x, y, width, height });
         }}
         onMouseMove={Platform.OS === 'web' ? (e: any) => {
-          if (dragStart && containerLayout) {
-            const nativeEvent = e.nativeEvent || e;
-            const pageX = nativeEvent.pageX || 0;
-            const pageY = nativeEvent.pageY || 0;
-            const x = pageX - containerLayout.x;
-            const y = pageY - containerLayout.y;
-            handleMove(x, y);
+          if (dragStart) {
+            const bounds = getContainerBounds();
+            if (bounds) {
+              const nativeEvent = e.nativeEvent || e;
+              const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : 0;
+              const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : 0;
+              const x = clientX - bounds.x;
+              const y = clientY - bounds.y;
+              handleMove(x, y);
+            }
           }
         } : undefined}
         onMouseUp={Platform.OS === 'web' ? () => {
@@ -393,14 +423,17 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           if (dragStart) handleEnd();
         } : undefined}
         onTouchMove={Platform.OS === 'web' ? (e: any) => {
-          if (dragStart && containerLayout) {
+          if (dragStart) {
             e.preventDefault();
-            const touch = e.nativeEvent?.touches?.[0] || e.nativeEvent?.changedTouches?.[0] || e.nativeEvent;
-            const pageX = touch.pageX || 0;
-            const pageY = touch.pageY || 0;
-            const x = pageX - containerLayout.x;
-            const y = pageY - containerLayout.y;
-            handleMove(x, y);
+            const bounds = getContainerBounds();
+            if (bounds) {
+              const touch = e.nativeEvent?.touches?.[0] || e.nativeEvent?.changedTouches?.[0] || e.nativeEvent;
+              const clientX = touch.clientX !== undefined ? touch.clientX : (touch.pageX || 0);
+              const clientY = touch.clientY !== undefined ? touch.clientY : (touch.pageY || 0);
+              const x = clientX - bounds.x;
+              const y = clientY - bounds.y;
+              handleMove(x, y);
+            }
           }
         } : undefined}
         onTouchEnd={Platform.OS === 'web' ? () => {
