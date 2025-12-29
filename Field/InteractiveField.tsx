@@ -136,6 +136,10 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         const element = fieldContainerRef.current._nativeNode || fieldContainerRef.current;
         if (element && element.getBoundingClientRect) {
           const rect = element.getBoundingClientRect();
+          // getBoundingClientRect() returns viewport-relative coordinates
+          // For desktop mouse (pageX/pageY): we need document-relative, so add scroll
+          // For mobile touch (clientX/clientY): viewport-relative is correct
+          // We'll handle the difference in the coordinate calculation based on event type
           return {
             x: rect.left,
             y: rect.top,
@@ -147,6 +151,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         // Fallback to containerLayout if getBoundingClientRect fails
       }
     }
+    // For native platforms, use containerLayout
     return containerLayout;
   };
 
@@ -246,14 +251,31 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           const clientX = touch.clientX !== undefined ? touch.clientX : (touch.pageX || 0);
           const clientY = touch.clientY !== undefined ? touch.clientY : (touch.pageY || 0);
           
-          if (clientX !== undefined && clientY !== undefined) {
+          if (clientX !== undefined && clientY !== undefined && bounds) {
+            // On mobile, try using getBoundingClientRect first, but if that doesn't work,
+            // fall back to containerLayout which might be more accurate
+            // Both clientX/clientY and getBoundingClientRect are viewport-relative
+            const calculatedX = clientX - bounds.x;
+            const calculatedY = clientY - bounds.y;
+            
+            // If we have containerLayout and it's different from bounds, use it for mobile
+            // This handles cases where getBoundingClientRect might be inaccurate on mobile
+            if (containerLayout && containerLayout.x !== bounds.x) {
+              // Use containerLayout coordinates which are from onLayout (more reliable on mobile)
+              return {
+                x: clientX - containerLayout.x,
+                y: clientY - containerLayout.y
+              };
+            }
+            
             return {
-              x: clientX - bounds.x,
-              y: clientY - bounds.y
+              x: calculatedX,
+              y: calculatedY
             };
           }
         } else {
           // For desktop/mouse: use pageX/pageY (document-relative) which works correctly
+          // Desktop is working, so keep this as-is
           const pageX = nativeEvent.pageX !== undefined ? nativeEvent.pageX : (nativeEvent.clientX || 0);
           const pageY = nativeEvent.pageY !== undefined ? nativeEvent.pageY : (nativeEvent.clientY || 0);
           
