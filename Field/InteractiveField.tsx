@@ -133,9 +133,20 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const getContainerBounds = (): {x: number, y: number, width: number, height: number} | null => {
     if (Platform.OS === 'web' && fieldContainerRef.current) {
       try {
+        // Access the underlying DOM element - React Native Web stores it in different places
         // @ts-ignore - accessing DOM element
-        const element = fieldContainerRef.current._nativeNode || fieldContainerRef.current;
-        if (element && element.getBoundingClientRect) {
+        let element = fieldContainerRef.current._nativeNode;
+        if (!element) {
+          // @ts-ignore - alternative access method
+          element = fieldContainerRef.current._internalFiberInstanceHandleDEV?.stateNode;
+        }
+        if (!element) {
+          // @ts-ignore - another alternative
+          element = fieldContainerRef.current;
+        }
+        
+        // Try to find the actual DOM element
+        if (element && typeof element.getBoundingClientRect === 'function') {
           const rect = element.getBoundingClientRect();
           // getBoundingClientRect() returns viewport-relative coordinates
           // This is the most reliable method across all browsers
@@ -146,8 +157,20 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
             height: rect.height
           };
         }
+        
+        // If getBoundingClientRect is not available, try to find the actual DOM node
+        if (element && element.nodeType === 1) {
+          const rect = element.getBoundingClientRect();
+          return {
+            x: rect.left,
+            y: rect.top,
+            width: rect.width,
+            height: rect.height
+          };
+        }
       } catch (e) {
         // Fallback to containerLayout if getBoundingClientRect fails
+        console.warn('getBoundingClientRect failed, using layout:', e);
       }
     }
     // For native platforms or fallback, use containerLayout
@@ -232,15 +255,40 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     });
   };
 
-  // Web mouse/touch handlers - use React Native's locationX/locationY for element-relative coordinates
+  // Web mouse/touch handlers - use getBoundingClientRect for accurate cross-browser coordinates
   const getWebHandlers = (key: string, isBall: boolean = false, isRunner: boolean = false) => {
     if (Platform.OS !== 'web') return {};
     
     const getRelativeCoords = (e: any) => {
       const nativeEvent = e.nativeEvent || e;
       
-      // React Native provides locationX/locationY which are relative to the element
-      // This is the most reliable method as it doesn't depend on browser coordinate systems
+      // Always use getBoundingClientRect for web to ensure cross-browser consistency
+      // This accounts for scroll position, container position, and viewport differences
+      const bounds = getContainerBounds();
+      if (bounds) {
+        let clientX = 0;
+        let clientY = 0;
+        
+        // Get viewport coordinates from the event
+        if (nativeEvent.touches || nativeEvent.changedTouches) {
+          const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
+          // Use clientX/clientY (viewport-relative) for consistency across browsers
+          clientX = touch.clientX !== undefined ? touch.clientX : (touch.pageX !== undefined ? touch.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
+          clientY = touch.clientY !== undefined ? touch.clientY : (touch.pageY !== undefined ? touch.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+        } else {
+          // Mouse events - use clientX/clientY (viewport-relative)
+          clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX !== undefined ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
+          clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY !== undefined ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+        }
+        
+        // Calculate element-relative coordinates
+        return {
+          x: clientX - bounds.x,
+          y: clientY - bounds.y
+        };
+      }
+      
+      // Fallback: try React Native's locationX/locationY if available
       if (nativeEvent.locationX !== undefined && nativeEvent.locationY !== undefined) {
         return {
           x: nativeEvent.locationX,
@@ -248,42 +296,10 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         };
       }
       
-      // Fallback: try to get locationX/locationY from touch events
-      if (nativeEvent.touches || nativeEvent.changedTouches) {
-        const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0];
-        if (touch && touch.locationX !== undefined && touch.locationY !== undefined) {
-          return {
-            x: touch.locationX,
-            y: touch.locationY
-          };
-        }
-      }
-      
-      // Last resort: use getBoundingClientRect with clientX/clientY
-      const bounds = getContainerBounds();
-      if (bounds) {
-        let clientX = 0;
-        let clientY = 0;
-        
-        if (nativeEvent.touches || nativeEvent.changedTouches) {
-          const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
-          clientX = touch.clientX !== undefined ? touch.clientX : (touch.pageX || 0);
-          clientY = touch.clientY !== undefined ? touch.clientY : (touch.pageY || 0);
-        } else {
-          clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX || 0);
-          clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY || 0);
-        }
-        
-        return {
-          x: clientX - bounds.x,
-          y: clientY - bounds.y
-        };
-      }
-      
       // Final fallback
       return {
-        x: nativeEvent.clientX || nativeEvent.pageX || 0,
-        y: nativeEvent.clientY || nativeEvent.pageY || 0
+        x: 0,
+        y: 0
       };
     };
     
@@ -437,24 +453,16 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         onMouseMove={Platform.OS === 'web' ? (e: any) => {
           if (dragStart) {
             const nativeEvent = e.nativeEvent || e;
-            // Prefer locationX/locationY (element-relative) for consistency
-            let x = 0;
-            let y = 0;
-            
-            if (nativeEvent.locationX !== undefined && nativeEvent.locationY !== undefined) {
-              x = nativeEvent.locationX;
-              y = nativeEvent.locationY;
-            } else {
-              // Fallback to bounds calculation
-              const bounds = getContainerBounds();
-              if (bounds) {
-                const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX || 0);
-                const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY || 0);
-                x = clientX - bounds.x;
-                y = clientY - bounds.y;
-              }
+            // Always use getBoundingClientRect for consistent cross-browser coordinates
+            const bounds = getContainerBounds();
+            if (bounds) {
+              // Use clientX/clientY (viewport-relative) for consistency
+              const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : (nativeEvent.pageX !== undefined ? nativeEvent.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
+              const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : (nativeEvent.pageY !== undefined ? nativeEvent.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+              const x = clientX - bounds.x;
+              const y = clientY - bounds.y;
+              handleMove(x, y);
             }
-            handleMove(x, y);
           }
         } : undefined}
         onMouseUp={Platform.OS === 'web' ? () => {
@@ -467,31 +475,17 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           if (dragStart) {
             e.preventDefault();
             const nativeEvent = e.nativeEvent || e;
-            // Prefer locationX/locationY (element-relative) for consistency
-            let x = 0;
-            let y = 0;
-            
-            if (nativeEvent.locationX !== undefined && nativeEvent.locationY !== undefined) {
-              x = nativeEvent.locationX;
-              y = nativeEvent.locationY;
-            } else {
-              // Try from touch object
-              const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0];
-              if (touch && touch.locationX !== undefined && touch.locationY !== undefined) {
-                x = touch.locationX;
-                y = touch.locationY;
-              } else {
-                // Fallback to bounds calculation
-                const bounds = getContainerBounds();
-                if (bounds) {
-                  const clientX = touch?.clientX !== undefined ? touch.clientX : (touch?.pageX || 0);
-                  const clientY = touch?.clientY !== undefined ? touch.clientY : (touch?.pageY || 0);
-                  x = clientX - bounds.x;
-                  y = clientY - bounds.y;
-                }
-              }
+            // Always use getBoundingClientRect for consistent cross-browser coordinates
+            const bounds = getContainerBounds();
+            if (bounds) {
+              const touch = nativeEvent.touches?.[0] || nativeEvent.changedTouches?.[0] || nativeEvent;
+              // Use clientX/clientY (viewport-relative) for consistency across browsers
+              const clientX = touch?.clientX !== undefined ? touch.clientX : (touch?.pageX !== undefined ? touch.pageX - (window.scrollX || window.pageXOffset || 0) : 0);
+              const clientY = touch?.clientY !== undefined ? touch.clientY : (touch?.pageY !== undefined ? touch.pageY - (window.scrollY || window.pageYOffset || 0) : 0);
+              const x = clientX - bounds.x;
+              const y = clientY - bounds.y;
+              handleMove(x, y);
             }
-            handleMove(x, y);
           }
         } : undefined}
         onTouchEnd={Platform.OS === 'web' ? () => {
