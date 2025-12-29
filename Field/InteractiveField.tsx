@@ -2,28 +2,29 @@ import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, PanResponder, Animated, TouchableOpacity, Platform } from 'react-native';
 import BaseballFieldImage from './BaseballFieldImage';
 
-// Initialize positions based on field dimensions - standard baseball positions
-// Positions are percentage-based (0.0 to 1.0) so they scale correctly with field size
-// Based on standard baseball field layout: home plate at bottom center, bases form diamond
-// Coordinates match the actual baseball-field.png image layout
-// FINALIZED POSITIONS - These coordinates are locked in and will scale proportionally
-// across all devices, browsers, and screen sizes
-const getInitialPositions = (width: number) => {
-  // All positions use width for both x and y since field is square
-  // React Native coordinates: (0,0) is top-left, y increases downward
-  // Home plate is at bottom (y ~ 0.88), center field is at top (y ~ 0.12-0.15)
-  return [
-    { key: 'P', label: 'P', x: width * 0.35, y: width * 0.66, color: '#e74c3c' },      // Pitcher - centered on mound
-    { key: 'C', label: 'C', x: width * 0.35, y: width * 0.83, color: '#3498db' },      // Catcher - directly behind home plate
-    { key: '1B', label: '1B', x: width * 0.51, y: width * 0.61, color: '#2ecc71' },  // First Baseman - just past 1B base towards home (right side)
-    { key: '2B', label: '2B', x: width * 0.45, y: width * 0.50, color: '#f39c12' },   // Second Baseman - between 1B and 2B, closer to 2B
-    { key: '3B', label: '3B', x: width * 0.21, y: width * 0.60, color: '#9b59b6' }, // Third Baseman - just past 3B base towards home (left side)
-    { key: 'SS', label: 'SS', x: width * 0.25, y: width * 0.50, color: '#1abc9c' },  // Shortstop - between 2B and 3B, closer to 2B
-    { key: 'LF', label: 'LF', x: width * 0.11, y: width * 0.36, color: '#34495e' },  // Left Fielder - deep left outfield
-    { key: 'CF', label: 'CF', x: width * 0.35, y: width * 0.29, color: '#e67e22' },   // Center Fielder - deep center outfield
-    { key: 'RF', label: 'RF', x: width * 0.58, y: width * 0.36, color: '#27ae60' },   // Right Fielder - deep right outfield
-  ];
+// Normalized positions (0.0 to 1.0) - these scale proportionally across all browsers and devices
+// React Native coordinates: (0,0) is top-left, y increases downward
+type PlayerPos = {
+  key: string;
+  label: string;
+  xPercent: number; // 0.0 to 1.0
+  yPercent: number; // 0.0 to 1.0
+  color: string;
 };
+
+const BASE_POSITIONS: PlayerPos[] = [
+  { key: 'P', label: 'P', xPercent: 0.35, yPercent: 0.66, color: '#e74c3c' },      // Pitcher - centered on mound
+  { key: 'C', label: 'C', xPercent: 0.35, yPercent: 0.83, color: '#3498db' },      // Catcher - directly behind home plate
+  { key: '1B', label: '1B', xPercent: 0.51, yPercent: 0.61, color: '#2ecc71' },  // First Baseman - just past 1B base towards home (right side)
+  { key: '2B', label: '2B', xPercent: 0.45, yPercent: 0.50, color: '#f39c12' },   // Second Baseman - between 1B and 2B, closer to 2B
+  { key: '3B', label: '3B', xPercent: 0.21, yPercent: 0.60, color: '#9b59b6' }, // Third Baseman - just past 3B base towards home (left side)
+  { key: 'SS', label: 'SS', xPercent: 0.25, yPercent: 0.50, color: '#1abc9c' },  // Shortstop - between 2B and 3B, closer to 2B
+  { key: 'LF', label: 'LF', xPercent: 0.11, yPercent: 0.36, color: '#34495e' },  // Left Fielder - deep left outfield
+  { key: 'CF', label: 'CF', xPercent: 0.35, yPercent: 0.29, color: '#e67e22' },   // Center Fielder - deep center outfield
+  { key: 'RF', label: 'RF', xPercent: 0.58, yPercent: 0.36, color: '#27ae60' },   // Right Fielder - deep right outfield
+];
+
+const BALL_BASE_POS = { xPercent: 0.35, yPercent: 0.70 };
 
 interface InteractiveFieldProps {
   onReset?: () => void;
@@ -35,7 +36,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const fieldWidth = fieldSize;
   const fieldHeight = fieldSize;
 
-  // Initialize positions - will be updated when fieldSize is set
+  // Store positions in pixels (converted from normalized percentages)
   const [playerPositions, setPlayerPositions] = useState<Array<{key: string, label: string, x: number, y: number, color: string}>>([]);
   const [ballPos, setBallPos] = useState({ x: 0, y: 0 });
   const [runners, setRunners] = useState<Array<{id: string, x: number, y: number}>>([]);
@@ -43,18 +44,40 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const [draggedBall, setDraggedBall] = useState(false);
   const [draggedRunner, setDraggedRunner] = useState<string | null>(null);
 
-  // Update positions when field size changes - recalculate based on actual rendered size
+  // Convert normalized positions to pixels when field size changes
   useEffect(() => {
     if (fieldSize > 0) {
-      setPlayerPositions(getInitialPositions(fieldSize));
-      setBallPos({ x: fieldSize * 0.35, y: fieldSize * 0.70 });
+      setPlayerPositions(
+        BASE_POSITIONS.map(pos => ({
+          key: pos.key,
+          label: pos.label,
+          x: fieldSize * pos.xPercent,
+          y: fieldSize * pos.yPercent,
+          color: pos.color,
+        }))
+      );
+      setBallPos({ 
+        x: fieldSize * BALL_BASE_POS.xPercent, 
+        y: fieldSize * BALL_BASE_POS.yPercent 
+      });
     }
   }, [fieldSize]);
 
   const resetPositions = () => {
     if (fieldSize > 0) {
-      setPlayerPositions(getInitialPositions(fieldSize));
-      setBallPos({ x: fieldSize * 0.35, y: fieldSize * 0.70 });
+      setPlayerPositions(
+        BASE_POSITIONS.map(pos => ({
+          key: pos.key,
+          label: pos.label,
+          x: fieldSize * pos.xPercent,
+          y: fieldSize * pos.yPercent,
+          color: pos.color,
+        }))
+      );
+      setBallPos({ 
+        x: fieldSize * BALL_BASE_POS.xPercent, 
+        y: fieldSize * BALL_BASE_POS.yPercent 
+      });
     }
     setRunners([]);
     setDraggedPlayer(null);
@@ -415,9 +438,7 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           setContainerLayout({ x, y, width, height });
           
           // Set fieldSize to actual rendered width - this is the single source of truth
-          if (width !== fieldSize) {
-            setFieldSize(width);
-          }
+          setFieldSize(width);
           
           // Also measure in window for accurate cross-browser coordinates
           if (fieldContainerRef.current) {
