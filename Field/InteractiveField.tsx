@@ -1,6 +1,13 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { View, Text, PanResponder, Animated, TouchableOpacity, Platform, LayoutChangeEvent } from 'react-native';
+import { View, Text, PanResponder, Animated, TouchableOpacity, Platform, LayoutChangeEvent, Alert, TextInput } from 'react-native';
 import BaseballFieldImage from './BaseballFieldImage';
+import ScenarioRecorder from './ScenarioRecorder';
+import ScenarioPlayer from './ScenarioPlayer';
+import ScenarioLibrary from './ScenarioLibrary';
+import PasswordPrompt from './PasswordPrompt';
+import { FieldScenario } from '../Data/Models/fieldScenarios';
+import { saveScenario } from '../Data/Store/scenarioStorage';
+import { DEV_PASSWORD, IS_DEV_MODE } from '../Config/devConfig';
 
 // Constants for marker sizes and offsets
 const MARKER_SIZES = {
@@ -119,6 +126,19 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const [draggedBall, setDraggedBall] = useState(false);
   const [draggedRunner, setDraggedRunner] = useState<string | null>(null);
 
+  // Multi-select for players (only active when recording)
+  const [selectedPlayers, setSelectedPlayers] = useState<Set<string>>(new Set());
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const selectedPlayersStartPositions = useRef<Map<string, { x: number; y: number }>>(new Map());
+
+  // Scenario recording and playback states
+  const [showRecorder, setShowRecorder] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const [currentScenario, setCurrentScenario] = useState<FieldScenario | null>(null);
+  const [isPlayingScenario, setIsPlayingScenario] = useState(false);
+  const [isDevAuthenticated, setIsDevAuthenticated] = useState(false); // Always require password
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+
   // Convert normalized positions to pixels when field size changes
   useEffect(() => {
     if (fieldSize > 0) {
@@ -173,6 +193,79 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
       }
       return prev;
     });
+  }, []);
+
+  // Scenario handlers
+  const handleSaveScenario = useCallback(async (scenario: FieldScenario) => {
+    const success = await saveScenario(scenario);
+    if (success) {
+      setShowRecorder(false);
+      // Optionally show success message
+    } else {
+      // Handle error - could show alert
+      console.error('Failed to save scenario');
+    }
+  }, []);
+
+  const handleSelectScenario = useCallback((scenario: FieldScenario) => {
+    setCurrentScenario(scenario);
+    setIsPlayingScenario(true);
+    // Reset positions to initial scenario positions
+    if (fieldSize > 0) {
+      const scaleFactor = fieldSize / scenario.fieldSize;
+      setPlayerPositions(
+        scenario.initialPlayers.map(p => ({
+          key: p.key,
+          label: p.label,
+          x: p.x * scaleFactor,
+          y: p.y * scaleFactor,
+          color: p.color,
+        }))
+      );
+      setBallPos({
+        x: scenario.initialBall.x * scaleFactor,
+        y: scenario.initialBall.y * scaleFactor,
+      });
+      setRunners(
+        scenario.initialRunners.map(r => ({
+          id: r.id,
+          x: r.x * scaleFactor,
+          y: r.y * scaleFactor,
+        }))
+      );
+    }
+  }, [fieldSize]);
+
+  const handleClosePlayer = useCallback(() => {
+    setIsPlayingScenario(false);
+    setCurrentScenario(null);
+  }, []);
+
+  const handleRecordButtonPress = useCallback(() => {
+    console.log('Record button pressed, isDevAuthenticated:', isDevAuthenticated);
+    if (isDevAuthenticated) {
+      setShowRecorder(true);
+    } else {
+      console.log('Showing password prompt');
+      setShowPasswordPrompt(true);
+    }
+  }, [isDevAuthenticated]);
+
+  const handlePasswordConfirm = useCallback((password: string) => {
+    console.log('Password entered, checking against:', DEV_PASSWORD);
+    if (password === DEV_PASSWORD) {
+      console.log('Password correct, authenticating');
+      setIsDevAuthenticated(true);
+      setShowPasswordPrompt(false);
+      setShowRecorder(true);
+    } else {
+      console.log('Password incorrect');
+      if (Platform.OS === 'web') {
+        alert('Incorrect password');
+      } else {
+        Alert.alert('Error', 'Incorrect password');
+      }
+    }
   }, []);
 
   const fieldContainerRef = useRef<View>(null);
@@ -292,6 +385,11 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   }, [containerLayout, containerWindowLayout]);
 
   const handleStart = useCallback((key: string, isBall: boolean, isRunner: boolean, startX: number, startY: number) => {
+    // Don't allow dragging while playing a scenario
+    if (isPlayingScenario) {
+      return;
+    }
+
     // Validate key is a string and not empty
     if (typeof key !== 'string' || key.length === 0) {
       if (__DEV__) {
@@ -311,12 +409,31 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
       setDraggedRunner(key);
       setDragStart({ x: clampedX, y: clampedY, key, isBall: false, isRunner: true });
     } else {
+      // Handle player selection/dragging
+      if (multiSelectMode && showRecorder) {
+        // Toggle selection on click (not drag start)
+        // For now, we'll handle selection separately
+      }
+      
+      // If this player is selected and we're in multi-select mode, store starting positions
+      if (multiSelectMode && showRecorder && selectedPlayers.has(key)) {
+        selectedPlayersStartPositions.current.clear();
+        selectedPlayers.forEach(playerKey => {
+          const player = playerPositions.find(p => p.key === playerKey);
+          if (player) {
+            selectedPlayersStartPositions.current.set(playerKey, { x: player.x, y: player.y });
+          }
+        });
+      }
+      
       setDraggedPlayer(key);
       setDragStart({ x: clampedX, y: clampedY, key, isBall: false, isRunner: false });
     }
-  }, [fieldWidth, fieldHeight]);
+  }, [fieldWidth, fieldHeight, isPlayingScenario, multiSelectMode, showRecorder, selectedPlayers, playerPositions]);
 
   const handleMove = useCallback((currentX: number, currentY: number) => {
+    // Don't allow dragging while playing a scenario
+    if (isPlayingScenario) return;
     if (!dragStart) return;
 
     // Validate inputs are numbers
@@ -357,16 +474,50 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         )
       );
     } else {
-      setPlayerPositions(prev =>
-        prev.map((pos) =>
-          pos.key === dragStart.key ? { ...pos, x: newX, y: newY } : pos
-        )
-      );
+      // Handle player movement - if multi-select and this player is selected, move all selected players
+      if (multiSelectMode && showRecorder && selectedPlayers.has(dragStart.key) && selectedPlayers.size > 1) {
+        const draggedPlayerStart = selectedPlayersStartPositions.current.get(dragStart.key);
+        if (draggedPlayerStart) {
+          const deltaX = newX - draggedPlayerStart.x;
+          const deltaY = newY - draggedPlayerStart.y;
+          
+          setPlayerPositions(prev =>
+            prev.map((pos) => {
+              if (selectedPlayers.has(pos.key)) {
+                const startPos = selectedPlayersStartPositions.current.get(pos.key);
+                if (startPos) {
+                  const markerOffset = MARKER_SIZES.PLAYER.offset;
+                  return {
+                    ...pos,
+                    x: Math.max(markerOffset, Math.min(fieldWidth - markerOffset, startPos.x + deltaX)),
+                    y: Math.max(markerOffset, Math.min(fieldHeight - markerOffset, startPos.y + deltaY)),
+                  };
+                }
+              }
+              return pos;
+            })
+          );
+        } else {
+          // Fallback to single player movement
+          setPlayerPositions(prev =>
+            prev.map((pos) =>
+              pos.key === dragStart.key ? { ...pos, x: newX, y: newY } : pos
+            )
+          );
+        }
+      } else {
+        // Single player movement
+        setPlayerPositions(prev =>
+          prev.map((pos) =>
+            pos.key === dragStart.key ? { ...pos, x: newX, y: newY } : pos
+          )
+        );
+      }
     }
 
     // Update drag start position for next move
     setDragStart(prev => prev ? { ...prev, x: currentX, y: currentY } : null);
-  }, [dragStart, ballPos, runners, playerPositions, fieldWidth, fieldHeight]);
+  }, [dragStart, ballPos, runners, playerPositions, fieldWidth, fieldHeight, isPlayingScenario]);
 
   const handleEnd = useCallback(() => {
     setDraggedPlayer(null);
@@ -424,9 +575,32 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     };
   }, [getContainerRelativeCoords, handleStart]);
 
+  const togglePlayerSelection = useCallback((playerKey: string) => {
+    if (!showRecorder) return;
+    setSelectedPlayers(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(playerKey)) {
+        newSet.delete(playerKey);
+      } else {
+        newSet.add(playerKey);
+      }
+      return newSet;
+    });
+  }, [showRecorder]);
+
+  const selectAllPlayers = useCallback(() => {
+    if (!showRecorder) return;
+    setSelectedPlayers(new Set(playerPositions.map(p => p.key)));
+  }, [showRecorder, playerPositions]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedPlayers(new Set());
+  }, []);
+
   const renderPlayer = useCallback((player: PlayerPosition) => {
     const panResponder = createPanResponder(player.key);
     const isDragging = draggedPlayer === player.key;
+    const isSelected = selectedPlayers.has(player.key);
     const webHandlers = getWebHandlers(player.key);
     
     return (
@@ -445,23 +619,40 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
           backgroundColor: player.color,
           justifyContent: 'center',
           alignItems: 'center',
-          borderWidth: isDragging ? MARKER_SIZES.PLAYER.borderWidth.dragging : MARKER_SIZES.PLAYER.borderWidth.normal,
-          borderColor: '#fff',
+          borderWidth: isSelected ? 4 : (isDragging ? MARKER_SIZES.PLAYER.borderWidth.dragging : MARKER_SIZES.PLAYER.borderWidth.normal),
+          borderColor: isSelected ? '#ffd700' : '#fff',
           shadowColor: '#000',
           shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: isDragging ? 0.8 : 0.5,
+          shadowOpacity: isDragging ? 0.8 : (isSelected ? 0.7 : 0.5),
           shadowRadius: isDragging ? 5 : 3,
-          elevation: isDragging ? 8 : 5,
-          transform: [{ scale: isDragging ? 1.1 : 1 }],
+          elevation: isDragging ? 8 : (isSelected ? 7 : 5),
+          transform: [{ scale: isDragging ? 1.1 : (isSelected ? 1.05 : 1) }],
           cursor: Platform.OS === 'web' ? 'pointer' : undefined,
-          zIndex: isDragging ? Z_INDEX.DRAGGING : Z_INDEX.NORMAL,
+          zIndex: isDragging ? Z_INDEX.DRAGGING : (isSelected ? 100 : Z_INDEX.NORMAL),
         }}
         {...(Platform.OS === 'web' ? webHandlers : panResponder.panHandlers)}
       >
         <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 12 }}>{player.label}</Text>
+        {isSelected && showRecorder && (
+          <View style={{
+            position: 'absolute',
+            top: -5,
+            right: -5,
+            width: 20,
+            height: 20,
+            borderRadius: 10,
+            backgroundColor: '#ffd700',
+            justifyContent: 'center',
+            alignItems: 'center',
+            borderWidth: 2,
+            borderColor: '#fff',
+          }}>
+            <Text style={{ color: '#000', fontSize: 12, fontWeight: 'bold' }}>✓</Text>
+          </View>
+        )}
       </Animated.View>
     );
-  }, [createPanResponder, draggedPlayer, getWebHandlers]);
+  }, [createPanResponder, draggedPlayer, getWebHandlers, selectedPlayers, showRecorder, multiSelectMode]);
 
   const renderBall = useCallback(() => {
     const panResponder = createPanResponder('ball', true);
@@ -708,6 +899,163 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
       >
         <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>Reset Positions</Text>
       </TouchableOpacity>
+
+      {/* Scenario Controls */}
+      <View style={{ 
+        marginTop: 20,
+        width: fieldSize > 0 ? fieldSize : '100%',
+        maxWidth: '100%',
+        flexDirection: 'row', 
+        justifyContent: 'center', 
+        alignItems: 'center',
+        gap: 10,
+        flexWrap: 'wrap'
+      }}>
+        {!showRecorder && (
+          <>
+            <TouchableOpacity
+              accessible={true}
+              accessibilityLabel="Record new scenario"
+              accessibilityRole="button"
+              style={{ 
+                paddingHorizontal: 20, 
+                paddingVertical: 10, 
+                backgroundColor: '#9b59b6', 
+                borderRadius: 8
+              }}
+              onPress={handleRecordButtonPress}
+            >
+              <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>📹 Record Scenario</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              accessible={true}
+              accessibilityLabel="Browse scenarios"
+              accessibilityRole="button"
+              style={{ 
+                paddingHorizontal: 20, 
+                paddingVertical: 10, 
+                backgroundColor: '#3498db', 
+                borderRadius: 8
+              }}
+              onPress={() => setShowLibrary(true)}
+            >
+              <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>📚 Browse Scenarios</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+
+      {/* Multi-Select Controls - Only show when recording */}
+      {showRecorder && (
+        <View style={{ 
+          marginTop: 15,
+          width: fieldSize > 0 ? fieldSize : '100%',
+          maxWidth: '100%',
+          flexDirection: 'row',
+          justifyContent: 'center',
+          gap: 10,
+          flexWrap: 'wrap'
+        }}>
+          <TouchableOpacity
+            style={{
+              paddingHorizontal: 15,
+              paddingVertical: 8,
+              backgroundColor: multiSelectMode ? '#4CAF50' : '#666',
+              borderRadius: 8,
+            }}
+            onPress={() => {
+              setMultiSelectMode(!multiSelectMode);
+              if (!multiSelectMode) {
+                clearSelection();
+              }
+            }}
+          >
+            <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold' }}>
+              {multiSelectMode ? '✓ Multi-Select ON' : 'Multi-Select OFF'}
+            </Text>
+          </TouchableOpacity>
+          
+          {multiSelectMode && (
+            <>
+              <TouchableOpacity
+                style={{
+                  paddingHorizontal: 15,
+                  paddingVertical: 8,
+                  backgroundColor: '#2196F3',
+                  borderRadius: 8,
+                }}
+                onPress={selectAllPlayers}
+              >
+                <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold' }}>
+                  Select All Players
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={{
+                  paddingHorizontal: 15,
+                  paddingVertical: 8,
+                  backgroundColor: '#ff9800',
+                  borderRadius: 8,
+                }}
+                onPress={clearSelection}
+              >
+                <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold' }}>
+                  Clear Selection ({selectedPlayers.size})
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      )}
+
+      {/* Scenario Recorder - Inline below field */}
+      {showRecorder && (
+        <View style={{ width: fieldSize > 0 ? fieldSize : '100%', maxWidth: '100%' }}>
+          <ScenarioRecorder
+            fieldSize={fieldSize}
+            playerPositions={playerPositions}
+            ballPos={ballPos}
+            runners={runners}
+            onSave={handleSaveScenario}
+            onCancel={() => {
+              setShowRecorder(false);
+              setMultiSelectMode(false);
+              clearSelection();
+            }}
+          />
+        </View>
+      )}
+
+      {/* Password Prompt */}
+      <PasswordPrompt
+        visible={showPasswordPrompt}
+        onConfirm={handlePasswordConfirm}
+        onCancel={() => setShowPasswordPrompt(false)}
+        title="Password Required"
+        message="Enter the password to record scenarios:"
+      />
+
+      {/* Scenario Library Modal */}
+      <ScenarioLibrary
+        visible={showLibrary}
+        onSelectScenario={handleSelectScenario}
+        onClose={() => setShowLibrary(false)}
+        isDevMode={isDevAuthenticated}
+      />
+
+      {/* Scenario Player Overlay */}
+      {isPlayingScenario && currentScenario && (
+        <ScenarioPlayer
+          scenario={currentScenario}
+          fieldSize={fieldSize}
+          onPlayerPositionsChange={setPlayerPositions}
+          onBallPosChange={setBallPos}
+          onRunnersChange={setRunners}
+          onClose={handleClosePlayer}
+        />
+      )}
     </View>
   );
 }
