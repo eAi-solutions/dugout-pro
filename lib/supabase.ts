@@ -1,8 +1,13 @@
 // Supabase client configuration for Expo/React Native
-import 'react-native-url-polyfill/auto';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
+
+// Only load URL polyfill on React Native (not on web)
+// Web browsers have native URL support, so polyfill is not needed
+if (Platform.OS !== 'web') {
+  require('react-native-url-polyfill/auto');
+}
 
 // Get Supabase URL from Expo environment variables
 const getSupabaseUrl = (): string => {
