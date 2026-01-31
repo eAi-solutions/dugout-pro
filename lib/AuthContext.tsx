@@ -33,68 +33,66 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   useEffect(() => {
     let mounted = true;
-    let timeoutId: NodeJS.Timeout;
     let subscription: { unsubscribe: () => void } | null = null;
-    
-    // Set a timeout to force loading to false after 1 second
-    timeoutId = setTimeout(() => {
-      if (mounted) {
-        setLoading(false);
-      }
-    }, 1000);
     
     // Initialize auth state asynchronously
     const initAuth = async () => {
       try {
         // Get initial session with error handling
+        // App remains in loading state until this resolves
         const result = await supabase.auth.getSession();
         const { data, error } = result || { data: { session: null }, error: null };
         const session = data?.session || null;
         
-        clearTimeout(timeoutId);
         if (!mounted) return;
         
         if (error) {
           console.error('Error getting session:', error);
+          setSession(null);
+          setUser(null);
           setLoading(false);
           return;
         }
         
+        // Set session and user state
         setSession(session);
         setUser(session?.user ?? null);
         setLoading(false);
 
         // Subscribe to auth state changes
+        // Note: loading is already false at this point, so we just update session/user
         try {
           const subResult = supabase.auth.onAuthStateChange((_event, session) => {
             if (mounted) {
               setSession(session);
               setUser(session?.user ?? null);
-              setLoading(false);
+              // Loading is already false after initial session check
+              // Auth state changes don't affect loading state
             }
           });
           subscription = subResult?.data?.subscription || null;
         } catch (subError) {
           console.error('Error setting up auth subscription:', subError);
+          // Even if subscription fails, we've initialized the session
+          if (mounted) {
+            setLoading(false);
+          }
         }
       } catch (error) {
-        clearTimeout(timeoutId);
         console.error('Exception getting session:', error);
         if (mounted) {
+          setSession(null);
+          setUser(null);
           setLoading(false);
         }
       }
     };
 
-    // Use setTimeout to defer initialization and prevent blocking
-    const initTimer = setTimeout(() => {
-      initAuth();
-    }, 100);
+    // Initialize immediately - no artificial delay
+    initAuth();
 
     return () => {
       mounted = false;
-      clearTimeout(timeoutId);
-      clearTimeout(initTimer);
       if (subscription) {
         try {
           subscription.unsubscribe();
@@ -123,6 +121,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const signOut = async () => {
     await supabase.auth.signOut();
+    // Explicitly clear session and user state after sign out
+    setSession(null);
+    setUser(null);
   };
 
   const value: AuthContextType = {
