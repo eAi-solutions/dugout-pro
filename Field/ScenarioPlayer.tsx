@@ -14,6 +14,7 @@ interface ScenarioPlayerProps {
   onRunnersChange: (runners: Array<{ id: string; x: number; y: number }>) => void;
   onClose: () => void;
   dockMode?: boolean; // If true, uses normal flow instead of absolute positioning
+  dockVariant?: 'compact' | 'wide'; // Layout variant for dock mode: 'compact' for mobile, 'wide' for tablet/web sidebar
 }
 
 // Interpolate between two keyframes
@@ -65,6 +66,7 @@ export default function ScenarioPlayer({
   onRunnersChange,
   onClose,
   dockMode = false,
+  dockVariant,
 }: ScenarioPlayerProps) {
   // Validate scenario
   if (!scenario) {
@@ -80,6 +82,10 @@ export default function ScenarioPlayer({
   const startTimeRef = useRef<number | null>(null);
   const pausedTimeRef = useRef<number>(0);
   const tickCountRef = useRef<number>(0);
+  
+  // Determine dock variant: default to 'compact' when dockMode is true
+  const variant = dockMode ? (dockVariant ?? 'compact') : null;
+  const isWideVariant = variant === 'wide';
 
   // Scale positions if field size changed
   const scaleFactor = (scenario.fieldSize && scenario.fieldSize > 0) ? (fieldSize / scenario.fieldSize) : 1;
@@ -717,25 +723,35 @@ export default function ScenarioPlayer({
   };
 
   return (
-    <View style={{
-      ...(dockMode ? {} : {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-      }),
-      backgroundColor: 'rgba(0, 0, 0, 0.9)',
-      padding: dockMode ? 12 : 15, // Slightly reduced padding in dock mode
-      ...(dockMode ? {
-        borderTopWidth: 1,
-        borderTopColor: '#333',
-        borderBottomWidth: 1,
-        borderBottomColor: '#333',
-      } : {
-        borderTopLeftRadius: 15,
-        borderTopRightRadius: 15,
-      }),
-    }}>
+    <View 
+      style={{
+        ...(dockMode ? {
+          // Layout guarantee: Use flex column to ensure controls stay at bottom
+          flexDirection: 'column',
+          // Never clip controls - parent containers must respect this
+          // Controls have flexShrink: 0 and minHeight: 44, so they always reserve space
+        } : {
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+        }),
+        backgroundColor: 'rgba(0, 0, 0, 0.9)',
+        padding: dockMode ? 12 : 15, // Slightly reduced padding in dock mode
+        ...(dockMode ? {
+          borderTopWidth: 1,
+          borderTopColor: '#333',
+          borderBottomWidth: 1,
+          borderBottomColor: '#333',
+          // Layout guarantee: In wide variant, REMOVE overflow: 'hidden' to prevent clipping controls on web/tablet
+          // In compact variant, overflow: 'hidden' is safe because controls are protected by flexShrink: 0
+          ...(isWideVariant ? {} : { overflow: 'hidden' }),
+        } : {
+          borderTopLeftRadius: 15,
+          borderTopRightRadius: 15,
+        }),
+      }}
+    >
       {/* Header: Title + Time (fixed, flexShrink: 0) - Always visible */}
       <View style={{ 
         marginBottom: dockMode ? 6 : 8,
@@ -759,12 +775,17 @@ export default function ScenarioPlayer({
       </View>
 
       {/* Notes: Bounded scrollable region (maxHeight + scroll) - Cannot push controls off-screen */}
+      {/* Layout guarantee: Only this notes area scrolls; controls remain fixed and visible */}
       {scenario.description && (
         <View style={{ 
-          maxHeight: dockMode ? (notesExpanded ? 160 : 80) : 60, // Constrained height in dockMode (~2-3 lines at 12px font)
+          maxHeight: dockMode 
+            ? (isWideVariant 
+                ? (notesExpanded ? 200 : 120)  // Wide variant: larger maxHeight (120 default, 200 expanded)
+                : (notesExpanded ? 140 : 80)) // Compact variant: keep tighter maxHeight (80 default, 140 expanded)
+            : 60, // Non-dock mode
           marginBottom: dockMode ? 6 : 8,
           flexShrink: 0, // Critical: Prevent notes container from expanding and pushing controls
-          overflow: 'hidden', // Ensure content doesn't overflow container
+          overflow: 'hidden', // Ensure content doesn't overflow container - only notes scroll, never controls
         }}>
           <ScrollView 
             showsVerticalScrollIndicator={true}
@@ -824,14 +845,23 @@ export default function ScenarioPlayer({
       </View>
 
       {/* Controls: Always visible (fixed, flexShrink: 0) - Critical: Never pushed off-screen */}
+      {/* Layout guarantee: Controls row has flexShrink: 0 and minHeight: 44 */}
+      {/* Parent containers must not clip this - it always reserves space and stays visible */}
+      {/* If height is constrained, only the notes area scrolls above, never the controls */}
       <View style={{ 
         flexDirection: 'row', 
         alignItems: 'center', 
         justifyContent: 'center', 
-        gap: dockMode ? 6 : 10, 
-        flexWrap: 'wrap',
-        flexShrink: 0, // Critical: Prevent controls from being pushed off-screen
-        minHeight: 44, // Ensure minimum height for touch targets
+        ...(isWideVariant 
+          ? { 
+              flexWrap: 'wrap', // Wide variant: allow wrapping
+            }
+          : {
+              flexWrap: 'nowrap', // Compact: single row
+            }
+        ),
+        flexShrink: 0, // Layout guarantee: Never shrinks, always reserves space
+        minHeight: 44, // Layout guarantee: Minimum height for touch targets and visibility
       }}>
         <TouchableOpacity
           style={{
@@ -843,6 +873,8 @@ export default function ScenarioPlayer({
             minHeight: 44, // Ensure >=44px tall for accessibility
             alignItems: 'center',
             justifyContent: 'center',
+            marginRight: 6, // Use margins for spacing in both variants
+            ...(isWideVariant ? { marginBottom: 6 } : {}), // Wide variant: add bottom margin for wrapping
           }}
           onPress={handleReset}
         >
@@ -860,6 +892,8 @@ export default function ScenarioPlayer({
               minHeight: 44, // Ensure >=44px tall for accessibility
               alignItems: 'center',
               justifyContent: 'center',
+              marginRight: 6, // Use margins for spacing in both variants
+              ...(isWideVariant ? { marginBottom: 6 } : {}), // Wide variant: add bottom margin for wrapping
             }}
             onPress={handlePlay}
           >
@@ -876,6 +910,8 @@ export default function ScenarioPlayer({
               minHeight: 44, // Ensure >=44px tall for accessibility
               alignItems: 'center',
               justifyContent: 'center',
+              marginRight: 6, // Use margins for spacing in both variants
+              ...(isWideVariant ? { marginBottom: 6 } : {}), // Wide variant: add bottom margin for wrapping
             }}
             onPress={handlePause}
           >
@@ -883,7 +919,11 @@ export default function ScenarioPlayer({
           </TouchableOpacity>
         )}
 
-        <View style={{ flexDirection: 'row', gap: 5 }}>
+        <View style={{ 
+          flexDirection: 'row', 
+          marginRight: 6, // Use margins for spacing in both variants
+          ...(isWideVariant ? { marginBottom: 6 } : {}), // Wide variant: add bottom margin for wrapping
+        }}>
           <TouchableOpacity
             style={{
               backgroundColor: playbackSpeed === 0.5 ? '#4CAF50' : '#666',
@@ -894,6 +934,7 @@ export default function ScenarioPlayer({
               minHeight: 44, // Ensure >=44px tall for accessibility
               alignItems: 'center',
               justifyContent: 'center',
+              marginRight: 5, // Use margins for spacing in both variants
             }}
             onPress={() => setPlaybackSpeed(0.5)}
           >
@@ -909,6 +950,7 @@ export default function ScenarioPlayer({
               minHeight: 44, // Ensure >=44px tall for accessibility
               alignItems: 'center',
               justifyContent: 'center',
+              marginRight: 5, // Use margins for spacing in both variants
             }}
             onPress={() => setPlaybackSpeed(1)}
           >
@@ -941,6 +983,7 @@ export default function ScenarioPlayer({
             minHeight: 44, // Ensure >=44px tall for accessibility
             alignItems: 'center',
             justifyContent: 'center',
+            ...(isWideVariant ? { marginBottom: 6 } : {}), // Wide variant: add bottom margin for wrapping
           }}
           onPress={onClose}
         >

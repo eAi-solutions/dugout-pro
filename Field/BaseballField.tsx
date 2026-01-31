@@ -112,6 +112,7 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
                 onRunnersChange={playbackState.setRunners}
                 onClose={playbackState.handleClosePlayer}
                 dockMode={true}
+                dockVariant="compact"
               />
             </View>
           )}
@@ -149,6 +150,7 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
                       onRunnersChange={playbackState.setRunners}
                       onClose={playbackState.handleClosePlayer}
                       dockMode={true}
+                      dockVariant="wide"
                     />
                   </View>
                 );
@@ -246,11 +248,12 @@ const styles = StyleSheet.create({
   },
   playbackDockWide: {
     width: '100%',
-    maxHeight: 160, // Constraint for wide layout as well
+    // Allow natural height growth; ScenarioPlayer handles internal scrolling for notes
+    // Controls are protected with flexShrink: 0 and will always be visible
     backgroundColor: 'rgba(0, 0, 0, 0.9)',
     borderBottomWidth: 1,
     borderBottomColor: '#333',
-    overflow: 'hidden',
+    // Removed overflow: 'hidden' and maxHeight to prevent clipping controls
   },
   fieldContainer: {
     width: '100%',
