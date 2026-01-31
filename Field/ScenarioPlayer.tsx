@@ -13,6 +13,7 @@ interface ScenarioPlayerProps {
   onBallPosChange: (pos: { x: number; y: number }) => void;
   onRunnersChange: (runners: Array<{ id: string; x: number; y: number }>) => void;
   onClose: () => void;
+  dockMode?: boolean; // If true, uses normal flow instead of absolute positioning
 }
 
 // Interpolate between two keyframes
@@ -63,6 +64,7 @@ export default function ScenarioPlayer({
   onBallPosChange,
   onRunnersChange,
   onClose,
+  dockMode = false,
 }: ScenarioPlayerProps) {
   // Validate scenario
   if (!scenario) {
@@ -715,21 +717,30 @@ export default function ScenarioPlayer({
 
   return (
     <View style={{
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      right: 0,
+      ...(dockMode ? {} : {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+      }),
       backgroundColor: 'rgba(0, 0, 0, 0.9)',
-      padding: 15,
-      borderTopLeftRadius: 15,
-      borderTopRightRadius: 15,
+      padding: dockMode ? 12 : 15, // Slightly reduced padding in dock mode
+      ...(dockMode ? {
+        borderTopWidth: 1,
+        borderTopColor: '#333',
+        borderBottomWidth: 1,
+        borderBottomColor: '#333',
+      } : {
+        borderTopLeftRadius: 15,
+        borderTopRightRadius: 15,
+      }),
     }}>
-      <View style={{ marginBottom: 10 }}>
-        <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold', marginBottom: 5 }}>
+      <View style={{ marginBottom: dockMode ? 8 : 10 }}>
+        <Text style={{ color: 'white', fontSize: dockMode ? 16 : 18, fontWeight: 'bold', marginBottom: dockMode ? 3 : 5 }}>
           {scenario.name}
         </Text>
         {scenario.description && (
-          <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 5 }}>
+          <Text style={{ color: '#ccc', fontSize: dockMode ? 12 : 14, marginBottom: dockMode ? 3 : 5 }}>
             {scenario.description}
           </Text>
         )}
@@ -743,7 +754,7 @@ export default function ScenarioPlayer({
         height: 4,
         backgroundColor: '#333',
         borderRadius: 2,
-        marginBottom: 15,
+        marginBottom: dockMode ? 10 : 15,
         overflow: 'hidden',
       }}>
         <View style={{
@@ -754,14 +765,17 @@ export default function ScenarioPlayer({
       </View>
 
       {/* Controls */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: dockMode ? 6 : 10, flexWrap: 'wrap' }}>
         <TouchableOpacity
           style={{
             backgroundColor: '#666',
-            padding: 10,
+            paddingVertical: 10,
+            paddingHorizontal: 12,
             borderRadius: 8,
             minWidth: 60,
+            minHeight: 44, // Ensure >=44px tall for accessibility
             alignItems: 'center',
+            justifyContent: 'center',
           }}
           onPress={handleReset}
         >
@@ -772,10 +786,13 @@ export default function ScenarioPlayer({
           <TouchableOpacity
             style={{
               backgroundColor: '#4CAF50',
-              padding: 12,
+              paddingVertical: 12,
+              paddingHorizontal: 16,
               borderRadius: 8,
               minWidth: 80,
+              minHeight: 44, // Ensure >=44px tall for accessibility
               alignItems: 'center',
+              justifyContent: 'center',
             }}
             onPress={handlePlay}
           >
@@ -785,10 +802,13 @@ export default function ScenarioPlayer({
           <TouchableOpacity
             style={{
               backgroundColor: '#ff9800',
-              padding: 12,
+              paddingVertical: 12,
+              paddingHorizontal: 16,
               borderRadius: 8,
               minWidth: 80,
+              minHeight: 44, // Ensure >=44px tall for accessibility
               alignItems: 'center',
+              justifyContent: 'center',
             }}
             onPress={handlePause}
           >
@@ -800,10 +820,13 @@ export default function ScenarioPlayer({
           <TouchableOpacity
             style={{
               backgroundColor: playbackSpeed === 0.5 ? '#4CAF50' : '#666',
-              padding: 8,
+              paddingVertical: 8,
+              paddingHorizontal: 10,
               borderRadius: 6,
               minWidth: 50,
+              minHeight: 44, // Ensure >=44px tall for accessibility
               alignItems: 'center',
+              justifyContent: 'center',
             }}
             onPress={() => setPlaybackSpeed(0.5)}
           >
@@ -812,10 +835,13 @@ export default function ScenarioPlayer({
           <TouchableOpacity
             style={{
               backgroundColor: playbackSpeed === 1 ? '#4CAF50' : '#666',
-              padding: 8,
+              paddingVertical: 8,
+              paddingHorizontal: 10,
               borderRadius: 6,
               minWidth: 50,
+              minHeight: 44, // Ensure >=44px tall for accessibility
               alignItems: 'center',
+              justifyContent: 'center',
             }}
             onPress={() => setPlaybackSpeed(1)}
           >
@@ -824,10 +850,13 @@ export default function ScenarioPlayer({
           <TouchableOpacity
             style={{
               backgroundColor: playbackSpeed === 2 ? '#4CAF50' : '#666',
-              padding: 8,
+              paddingVertical: 8,
+              paddingHorizontal: 10,
               borderRadius: 6,
               minWidth: 50,
+              minHeight: 44, // Ensure >=44px tall for accessibility
               alignItems: 'center',
+              justifyContent: 'center',
             }}
             onPress={() => setPlaybackSpeed(2)}
           >
@@ -838,10 +867,13 @@ export default function ScenarioPlayer({
         <TouchableOpacity
           style={{
             backgroundColor: '#f44336',
-            padding: 10,
+            paddingVertical: 10,
+            paddingHorizontal: 12,
             borderRadius: 8,
             minWidth: 60,
+            minHeight: 44, // Ensure >=44px tall for accessibility
             alignItems: 'center',
+            justifyContent: 'center',
           }}
           onPress={onClose}
         >

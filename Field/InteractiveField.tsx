@@ -1,8 +1,7 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { View, Text, PanResponder, Animated, TouchableOpacity, Platform, LayoutChangeEvent, Alert, TextInput } from 'react-native';
+import React, { useState, useRef, useEffect, useMemo, useCallback, ReactElement } from 'react';
+import { View, Text, PanResponder, Animated, TouchableOpacity, Platform, LayoutChangeEvent, Alert, TextInput, ScrollView } from 'react-native';
 import BaseballFieldImage from './BaseballFieldImage';
 import ScenarioRecorder from './ScenarioRecorder';
-import ScenarioPlayer from './ScenarioPlayer';
 import ScenarioLibrary from './ScenarioLibrary';
 import { FieldScenario } from '../Data/Models/fieldScenarios';
 import { upsertScenario } from '../services/scenarioStore';
@@ -98,6 +97,43 @@ const BALL_BASE_POS = { xPercent: 0.50, yPercent: 0.70 };
 
 interface InteractiveFieldProps {
   onReset?: () => void;
+  layoutMode?: 'compact' | 'wide';
+  onPopupStateChange?: (isOpen: boolean) => void;
+  renderControlsSeparately?: boolean;
+  controlsCollapsed?: boolean;
+  onControlsPropsChange?: (controlsProps: {
+    fieldSize: number;
+    showRecorder: boolean;
+    showLibrary: boolean;
+    coachModeUnlocked: boolean;
+    multiSelectMode: boolean;
+    selectedPlayers: Set<string>;
+    playerPositions: PlayerPosition[];
+    ballPos: { x: number; y: number };
+    runners: RunnerPosition[];
+    addRunner: () => void;
+    removeRunner: () => void;
+    resetPositions: () => void;
+    handleRecordButtonPress: () => void;
+    setShowLibrary: (show: boolean) => void;
+    setMultiSelectMode: (mode: boolean) => void;
+    clearSelection: () => void;
+    selectAllPlayers: () => void;
+    handleSaveScenario: (scenario: FieldScenario) => Promise<void>;
+    handleSelectScenario: (scenario: FieldScenario) => void;
+    setShowRecorder: (show: boolean) => void;
+    collapsed?: boolean;
+  }) => void;
+  onPlaybackStateChange?: (playbackState: {
+    isPlayingScenario: boolean;
+    currentScenario: FieldScenario | null;
+    fieldSize: number;
+    setPlayerPositions: (positions: PlayerPosition[]) => void;
+    setBallPos: (pos: { x: number; y: number }) => void;
+    setRunners: (runners: RunnerPosition[]) => void;
+    handleClosePlayer: () => void;
+  }) => void;
+  renderPlaybackDock?: () => ReactElement | null;
 }
 
 // Helper to convert normalized positions to pixel positions
@@ -113,10 +149,378 @@ const convertPositionsToPixels = (fieldSize: number): PlayerPosition[] => {
   }));
 };
 
-export default function InteractiveField({ onReset }: InteractiveFieldProps) {
+// ============================================
+// FieldCanvas Component
+// Renders the interactive field diagram and player control popup overlay
+// ============================================
+interface FieldCanvasProps {
+  fieldSize: number;
+  playerPositions: PlayerPosition[];
+  ballPos: { x: number; y: number };
+  runners: RunnerPosition[];
+  setContainerRef: (node: View | null) => void;
+  handleLayout: (e: LayoutChangeEvent) => void;
+  webEventHandlers: any;
+  renderPlayer: (player: PlayerPosition) => ReactElement;
+  renderBall: () => ReactElement;
+  renderRunner: (runner: RunnerPosition) => ReactElement;
+  layoutMode?: 'compact' | 'wide';
+}
+
+function FieldCanvas({
+  fieldSize,
+  playerPositions,
+  ballPos,
+  runners,
+  setContainerRef,
+  handleLayout,
+  webEventHandlers,
+  renderPlayer,
+  renderBall,
+  renderRunner,
+  layoutMode = 'compact',
+}: FieldCanvasProps) {
+  return (
+    <View 
+      ref={setContainerRef}
+      accessible={true}
+      accessibilityLabel="Baseball field interactive diagram"
+      style={{ 
+        width: '100%',
+        maxWidth: layoutMode === 'wide' ? 800 : 900,
+        aspectRatio: 1,
+        alignSelf: 'center', 
+        marginVertical: layoutMode === 'wide' ? 0 : 20, 
+        position: 'relative',
+      }}
+      onLayout={handleLayout}
+      {...(Platform.OS === 'web' ? webEventHandlers : {})}
+    >
+      {/* Image-based Baseball Field Background */}
+      <BaseballFieldImage />
+      
+      {/* Overlay Players, Ball, and Runners on top of field - only render when fieldSize is set */}
+      {fieldSize > 0 && (
+        <View style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          pointerEvents: 'box-none'
+        }}>
+          {/* Players */}
+          {playerPositions.map(renderPlayer)}
+
+          {/* Baseball */}
+          {renderBall()}
+
+          {/* Runners */}
+          {runners.map(renderRunner)}
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ============================================
+// FieldControls Component
+// Renders all control UI: buttons, recorder, library, coach controls
+// ============================================
+interface FieldControlsProps {
+  fieldSize: number;
+  showRecorder: boolean;
+  showLibrary: boolean;
+  coachModeUnlocked: boolean;
+  multiSelectMode: boolean;
+  selectedPlayers: Set<string>;
+  playerPositions: PlayerPosition[];
+  ballPos: { x: number; y: number };
+  runners: RunnerPosition[];
+  addRunner: () => void;
+  removeRunner: () => void;
+  resetPositions: () => void;
+  handleRecordButtonPress: () => void;
+  setShowLibrary: (show: boolean) => void;
+  setMultiSelectMode: (mode: boolean) => void;
+  clearSelection: () => void;
+  selectAllPlayers: () => void;
+  handleSaveScenario: (scenario: FieldScenario) => Promise<void>;
+  handleSelectScenario: (scenario: FieldScenario) => void;
+  setShowRecorder: (show: boolean) => void;
+  collapsed?: boolean;
+}
+
+function FieldControls({
+  fieldSize,
+  showRecorder,
+  showLibrary,
+  coachModeUnlocked,
+  multiSelectMode,
+  selectedPlayers,
+  playerPositions,
+  ballPos,
+  runners,
+  addRunner,
+  removeRunner,
+  resetPositions,
+  handleRecordButtonPress,
+  setShowLibrary,
+  setMultiSelectMode,
+  clearSelection,
+  selectAllPlayers,
+  handleSaveScenario,
+  handleSelectScenario,
+  setShowRecorder,
+  collapsed = false,
+}: FieldControlsProps) {
+  // Collapsed state: show only a minimal "Controls" bar
+  if (collapsed) {
+    return (
+      <View style={{ 
+        padding: 12, 
+        backgroundColor: '#e8e8e8', 
+        borderTopWidth: 1, 
+        borderTopColor: '#ddd',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}>
+        <Text style={{ fontSize: 14, color: '#666', fontWeight: '600' }}>Controls</Text>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      {/* Add/Remove Runner Buttons */}
+      <View style={{ 
+        marginTop: 20,
+        width: fieldSize > 0 ? fieldSize : '100%',
+        maxWidth: '100%',
+        flexDirection: 'row', 
+        justifyContent: 'center', 
+        alignItems: 'center',
+        gap: 15
+      }}>
+        <TouchableOpacity
+          accessible={true}
+          accessibilityLabel="Add runner"
+          accessibilityRole="button"
+          style={{ 
+            paddingHorizontal: 20, 
+            paddingVertical: 10, 
+            backgroundColor: '#ff6b6b', 
+            borderRadius: 8
+          }}
+          onPress={addRunner}
+        >
+          <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>+ Add Runner</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          accessible={true}
+          accessibilityLabel="Remove runner"
+          accessibilityRole="button"
+          style={{ 
+            paddingHorizontal: 20, 
+            paddingVertical: 10, 
+            backgroundColor: '#3498db', 
+            borderRadius: 8
+          }}
+          onPress={removeRunner}
+        >
+          <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>- Remove Runner</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Instructions */}
+      <View style={{ 
+        marginTop: 20, 
+        width: fieldSize > 0 ? fieldSize : '100%',
+        maxWidth: '100%',
+        padding: 15, 
+        backgroundColor: '#f0f0f0', 
+        borderRadius: 8, 
+        alignItems: 'center' 
+      }}>
+        <Text style={{ fontSize: 14, fontWeight: 'bold', marginBottom: 5, color: '#333' }}>
+          Interactive Field
+        </Text>
+        <Text style={{ fontSize: 12, color: '#666', textAlign: 'center' }}>
+          Tap, hold, and drag players, runners, or the ball to move them around the field
+        </Text>
+      </View>
+
+      <TouchableOpacity
+        accessible={true}
+        accessibilityLabel="Reset all positions"
+        accessibilityRole="button"
+        style={{ marginTop: 15, paddingHorizontal: 20, paddingVertical: 10, backgroundColor: '#e74c3c', borderRadius: 8, alignSelf: 'center' }}
+        onPress={resetPositions}
+      >
+        <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>Reset Positions</Text>
+      </TouchableOpacity>
+
+      {/* Coach Mode Controls */}
+      {!showRecorder && (
+        <CoachModeControls />
+      )}
+
+      {/* Scenario Controls */}
+      <View style={{ 
+        marginTop: 20,
+        width: fieldSize > 0 ? fieldSize : '100%',
+        maxWidth: '100%',
+        flexDirection: 'row', 
+        justifyContent: 'center', 
+        alignItems: 'center',
+        gap: 10,
+        flexWrap: 'wrap'
+      }}>
+        {!showRecorder && (
+          <>
+            <TouchableOpacity
+              accessible={true}
+              accessibilityLabel="Record new scenario"
+              accessibilityRole="button"
+              style={{ 
+                paddingHorizontal: 20, 
+                paddingVertical: 10, 
+                backgroundColor: coachModeUnlocked ? '#9b59b6' : '#999', 
+                borderRadius: 8,
+                opacity: coachModeUnlocked ? 1 : 0.6,
+              }}
+              onPress={handleRecordButtonPress}
+              disabled={!coachModeUnlocked}
+            >
+              <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>
+                📹 Record Scenario
+                {!coachModeUnlocked && ' (Coach Mode Required)'}
+              </Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              accessible={true}
+              accessibilityLabel="Browse scenarios"
+              accessibilityRole="button"
+              style={{ 
+                paddingHorizontal: 20, 
+                paddingVertical: 10, 
+                backgroundColor: '#3498db', 
+                borderRadius: 8
+              }}
+              onPress={() => setShowLibrary(true)}
+            >
+              <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>📚 Browse Scenarios</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+
+      {/* Multi-Select Controls - Only show when recording */}
+      {showRecorder && (
+        <View style={{ 
+          marginTop: 15,
+          width: fieldSize > 0 ? fieldSize : '100%',
+          maxWidth: '100%',
+          flexDirection: 'row',
+          justifyContent: 'center',
+          gap: 10,
+          flexWrap: 'wrap'
+        }}>
+          <TouchableOpacity
+            style={{
+              paddingHorizontal: 15,
+              paddingVertical: 8,
+              backgroundColor: multiSelectMode ? '#4CAF50' : '#666',
+              borderRadius: 8,
+            }}
+            onPress={() => {
+              setMultiSelectMode(!multiSelectMode);
+              if (!multiSelectMode) {
+                clearSelection();
+              }
+            }}
+          >
+            <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold' }}>
+              {multiSelectMode ? '✓ Multi-Select ON' : 'Multi-Select OFF'}
+            </Text>
+          </TouchableOpacity>
+          
+          {multiSelectMode && (
+            <>
+              <TouchableOpacity
+                style={{
+                  paddingHorizontal: 15,
+                  paddingVertical: 8,
+                  backgroundColor: '#2196F3',
+                  borderRadius: 8,
+                }}
+                onPress={selectAllPlayers}
+              >
+                <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold' }}>
+                  Select All Players
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={{
+                  paddingHorizontal: 15,
+                  paddingVertical: 8,
+                  backgroundColor: '#ff9800',
+                  borderRadius: 8,
+                }}
+                onPress={clearSelection}
+              >
+                <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold' }}>
+                  Clear Selection ({selectedPlayers.size})
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      )}
+
+      {/* Scenario Recorder - Inline below field */}
+      {showRecorder && (
+        <View style={{ width: fieldSize > 0 ? fieldSize : '100%', maxWidth: '100%' }}>
+          <ScenarioRecorder
+            fieldSize={fieldSize}
+            playerPositions={playerPositions}
+            ballPos={ballPos}
+            runners={runners}
+            onSave={handleSaveScenario}
+            onCancel={() => {
+              setShowRecorder(false);
+              setMultiSelectMode(false);
+              clearSelection();
+            }}
+          />
+        </View>
+      )}
+
+      {/* Scenario Library Modal */}
+      <ScenarioLibrary
+        visible={showLibrary}
+        onSelectScenario={handleSelectScenario}
+        onClose={() => setShowLibrary(false)}
+        isDevMode={coachModeUnlocked}
+      />
+    </>
+  );
+}
+
+// ============================================
+// Main InteractiveField Component
+// Manages all state and renders FieldCanvas + FieldControls
+// ============================================
+export default function InteractiveField({ onReset, layoutMode = 'compact', onPopupStateChange, renderControlsSeparately = false, controlsCollapsed = false, onControlsPropsChange, onPlaybackStateChange, renderPlaybackDock }: InteractiveFieldProps) {
   const { user } = useAuth();
   const { coachModeUnlocked } = useCoachMode();
   
+  // ... existing state and logic remains unchanged ...
+  // (all the existing useState, useCallback, useEffect hooks stay here)
+
   // Use actual rendered container width as single source of truth
   const [fieldSize, setFieldSize] = useState(0);
   const fieldWidth = fieldSize;
@@ -140,6 +544,9 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const [showLibrary, setShowLibrary] = useState(false);
   const [currentScenario, setCurrentScenario] = useState<FieldScenario | null>(null);
   const [isPlayingScenario, setIsPlayingScenario] = useState(false);
+
+  // ... all existing useCallback, useEffect, and helper functions remain unchanged ...
+  // (convertPositionsToPixels, resetPositions, addRunner, removeRunner, etc.)
 
   // Convert normalized positions to pixels when field size changes
   useEffect(() => {
@@ -260,12 +667,35 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         }))
       );
     }
-  }, [fieldSize]);
+    // Notify parent of popup state change
+    if (onPopupStateChange) {
+      onPopupStateChange(true);
+    }
+  }, [fieldSize, onPopupStateChange]);
 
   const handleClosePlayer = useCallback(() => {
     setIsPlayingScenario(false);
     setCurrentScenario(null);
-  }, []);
+    // Notify parent of popup state change
+    if (onPopupStateChange) {
+      onPopupStateChange(false);
+    }
+  }, [onPopupStateChange]);
+
+  // Expose playback state to parent via callback
+  useEffect(() => {
+    if (onPlaybackStateChange) {
+      onPlaybackStateChange({
+        isPlayingScenario,
+        currentScenario,
+        fieldSize,
+        setPlayerPositions,
+        setBallPos,
+        setRunners,
+        handleClosePlayer,
+      });
+    }
+  }, [isPlayingScenario, currentScenario, fieldSize, onPlaybackStateChange, handleClosePlayer]);
 
   const handleRecordButtonPress = useCallback(() => {
     if (!coachModeUnlocked) {
@@ -796,274 +1226,140 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
     };
   }, [dragStart, getContainerRelativeCoords, handleMove, handleEnd]);
 
-  return (
-    <View style={{ width: '100%', alignItems: 'center', paddingHorizontal: 10 }}>
-      <View 
-        ref={setContainerRef}
-        accessible={true}
-        accessibilityLabel="Baseball field interactive diagram"
-        style={{ 
-          width: '100%',
-          maxWidth: 900,
-          aspectRatio: 1,
-          alignSelf: 'center', 
-          marginVertical: 20, 
-          position: 'relative',
-        }}
-        onLayout={handleLayout}
-        {...(Platform.OS === 'web' ? webEventHandlers : {})}
-      >
-        {/* Image-based Baseball Field Background */}
-        <BaseballFieldImage />
-        
-        {/* Overlay Players, Ball, and Runners on top of field - only render when fieldSize is set */}
-        {fieldSize > 0 && (
-          <View style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            pointerEvents: 'box-none'
-          }}>
-            {/* Players */}
-            {playerPositions.map(renderPlayer)}
-
-            {/* Baseball */}
-            {renderBall()}
-
-            {/* Runners */}
-            {runners.map(renderRunner)}
-          </View>
-        )}
-      </View>
-
-      {/* Add/Remove Runner Buttons */}
-      <View style={{ 
-        marginTop: 20,
-        width: fieldSize > 0 ? fieldSize : '100%',
-        maxWidth: '100%',
-        flexDirection: 'row', 
-        justifyContent: 'center', 
-        alignItems: 'center',
-        gap: 15
-      }}>
-        <TouchableOpacity
-          accessible={true}
-          accessibilityLabel="Add runner"
-          accessibilityRole="button"
-          style={{ 
-            paddingHorizontal: 20, 
-            paddingVertical: 10, 
-            backgroundColor: '#ff6b6b', 
-            borderRadius: 8
-          }}
-          onPress={addRunner}
-        >
-          <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>+ Add Runner</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity
-          accessible={true}
-          accessibilityLabel="Remove runner"
-          accessibilityRole="button"
-          style={{ 
-            paddingHorizontal: 20, 
-            paddingVertical: 10, 
-            backgroundColor: '#3498db', 
-            borderRadius: 8
-          }}
-          onPress={removeRunner}
-        >
-          <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>- Remove Runner</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Instructions */}
-      <View style={{ 
-        marginTop: 20, 
-        width: fieldSize > 0 ? fieldSize : '100%',
-        maxWidth: '100%',
-        padding: 15, 
-        backgroundColor: '#f0f0f0', 
-        borderRadius: 8, 
-        alignItems: 'center' 
-      }}>
-        <Text style={{ fontSize: 14, fontWeight: 'bold', marginBottom: 5, color: '#333' }}>
-          Interactive Field
-        </Text>
-        <Text style={{ fontSize: 12, color: '#666', textAlign: 'center' }}>
-          Tap, hold, and drag players, runners, or the ball to move them around the field
-        </Text>
-      </View>
-
-      <TouchableOpacity
-        accessible={true}
-        accessibilityLabel="Reset all positions"
-        accessibilityRole="button"
-        style={{ marginTop: 15, paddingHorizontal: 20, paddingVertical: 10, backgroundColor: '#e74c3c', borderRadius: 8, alignSelf: 'center' }}
-        onPress={resetPositions}
-      >
-        <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>Reset Positions</Text>
-      </TouchableOpacity>
-
-      {/* Coach Mode Controls */}
-      {!showRecorder && (
-        <CoachModeControls />
-      )}
-
-      {/* Scenario Controls */}
-      <View style={{ 
-        marginTop: 20,
-        width: fieldSize > 0 ? fieldSize : '100%',
-        maxWidth: '100%',
-        flexDirection: 'row', 
-        justifyContent: 'center', 
-        alignItems: 'center',
-        gap: 10,
-        flexWrap: 'wrap'
-      }}>
-        {!showRecorder && (
-          <>
-            <TouchableOpacity
-              accessible={true}
-              accessibilityLabel="Record new scenario"
-              accessibilityRole="button"
-              style={{ 
-                paddingHorizontal: 20, 
-                paddingVertical: 10, 
-                backgroundColor: coachModeUnlocked ? '#9b59b6' : '#999', 
-                borderRadius: 8,
-                opacity: coachModeUnlocked ? 1 : 0.6,
-              }}
-              onPress={handleRecordButtonPress}
-              disabled={!coachModeUnlocked}
-            >
-              <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>
-                📹 Record Scenario
-                {!coachModeUnlocked && ' (Coach Mode Required)'}
-              </Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              accessible={true}
-              accessibilityLabel="Browse scenarios"
-              accessibilityRole="button"
-              style={{ 
-                paddingHorizontal: 20, 
-                paddingVertical: 10, 
-                backgroundColor: '#3498db', 
-                borderRadius: 8
-              }}
-              onPress={() => setShowLibrary(true)}
-            >
-              <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>📚 Browse Scenarios</Text>
-            </TouchableOpacity>
-          </>
-        )}
-      </View>
-
-      {/* Multi-Select Controls - Only show when recording */}
-      {showRecorder && (
-        <View style={{ 
-          marginTop: 15,
-          width: fieldSize > 0 ? fieldSize : '100%',
-          maxWidth: '100%',
-          flexDirection: 'row',
-          justifyContent: 'center',
-          gap: 10,
-          flexWrap: 'wrap'
-        }}>
-          <TouchableOpacity
-            style={{
-              paddingHorizontal: 15,
-              paddingVertical: 8,
-              backgroundColor: multiSelectMode ? '#4CAF50' : '#666',
-              borderRadius: 8,
-            }}
-            onPress={() => {
-              setMultiSelectMode(!multiSelectMode);
-              if (!multiSelectMode) {
-                clearSelection();
-              }
-            }}
-          >
-            <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold' }}>
-              {multiSelectMode ? '✓ Multi-Select ON' : 'Multi-Select OFF'}
-            </Text>
-          </TouchableOpacity>
-          
-          {multiSelectMode && (
-            <>
-              <TouchableOpacity
-                style={{
-                  paddingHorizontal: 15,
-                  paddingVertical: 8,
-                  backgroundColor: '#2196F3',
-                  borderRadius: 8,
-                }}
-                onPress={selectAllPlayers}
-              >
-                <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold' }}>
-                  Select All Players
-                </Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={{
-                  paddingHorizontal: 15,
-                  paddingVertical: 8,
-                  backgroundColor: '#ff9800',
-                  borderRadius: 8,
-                }}
-                onPress={clearSelection}
-              >
-                <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold' }}>
-                  Clear Selection ({selectedPlayers.size})
-                </Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-      )}
-
-      {/* Scenario Recorder - Inline below field */}
-      {showRecorder && (
-        <View style={{ width: fieldSize > 0 ? fieldSize : '100%', maxWidth: '100%' }}>
-          <ScenarioRecorder
+  if (layoutMode === 'wide') {
+    return (
+      <View style={{ flex: 1, flexDirection: 'row', width: '100%' }}>
+        {/* Left: FieldCanvas */}
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <FieldCanvas
             fieldSize={fieldSize}
             playerPositions={playerPositions}
             ballPos={ballPos}
             runners={runners}
-            onSave={handleSaveScenario}
-            onCancel={() => {
-              setShowRecorder(false);
-              setMultiSelectMode(false);
-              clearSelection();
-            }}
+            setContainerRef={setContainerRef}
+            handleLayout={handleLayout}
+            webEventHandlers={webEventHandlers}
+            renderPlayer={renderPlayer}
+            renderBall={renderBall}
+            renderRunner={renderRunner}
+            layoutMode="wide"
           />
         </View>
-      )}
+        
+        {/* Right: Playback Dock (if playing) and FieldControls in fixed-width panel (360-420px) */}
+        <View style={{ width: 390, minWidth: 360, maxWidth: 420, backgroundColor: '#f5f5f5', borderLeftWidth: 1, borderLeftColor: '#ddd', flexDirection: 'column' }}>
+          {/* Playback Dock at top of right panel */}
+          {renderPlaybackDock && renderPlaybackDock()}
+          
+          {/* FieldControls below Playback Dock */}
+          <ScrollView 
+            style={{ flex: 1 }}
+            contentContainerStyle={{ padding: 20 }}
+            showsVerticalScrollIndicator={true}
+          >
+            <FieldControls
+              fieldSize={fieldSize}
+              showRecorder={showRecorder}
+              showLibrary={showLibrary}
+              coachModeUnlocked={coachModeUnlocked}
+              multiSelectMode={multiSelectMode}
+              selectedPlayers={selectedPlayers}
+              playerPositions={playerPositions}
+              ballPos={ballPos}
+              runners={runners}
+              addRunner={addRunner}
+              removeRunner={removeRunner}
+              resetPositions={resetPositions}
+              handleRecordButtonPress={handleRecordButtonPress}
+              setShowLibrary={setShowLibrary}
+              setMultiSelectMode={setMultiSelectMode}
+              clearSelection={clearSelection}
+              selectAllPlayers={selectAllPlayers}
+              handleSaveScenario={handleSaveScenario}
+              handleSelectScenario={handleSelectScenario}
+              setShowRecorder={setShowRecorder}
+            />
+          </ScrollView>
+        </View>
+      </View>
+    );
+  }
 
-      {/* Scenario Library Modal */}
-      <ScenarioLibrary
-        visible={showLibrary}
-        onSelectScenario={handleSelectScenario}
-        onClose={() => setShowLibrary(false)}
-        isDevMode={coachModeUnlocked}
-      />
+  // Prepare controls props
+  const controlsProps = {
+    fieldSize,
+    showRecorder,
+    showLibrary,
+    coachModeUnlocked,
+    multiSelectMode,
+    selectedPlayers,
+    playerPositions,
+    ballPos,
+    runners,
+    addRunner,
+    removeRunner,
+    resetPositions,
+    handleRecordButtonPress,
+    setShowLibrary,
+    setMultiSelectMode,
+    clearSelection,
+    selectAllPlayers,
+    handleSaveScenario,
+    handleSelectScenario,
+    setShowRecorder,
+    collapsed: controlsCollapsed,
+  };
 
-      {/* Scenario Player Overlay */}
-      {isPlayingScenario && currentScenario && (
-        <ScenarioPlayer
-          scenario={currentScenario}
+  // Notify parent of controls props changes when renderControlsSeparately is true
+  useEffect(() => {
+    if (renderControlsSeparately && onControlsPropsChange) {
+      onControlsPropsChange(controlsProps);
+    }
+  }, [renderControlsSeparately, onControlsPropsChange, fieldSize, showRecorder, showLibrary, coachModeUnlocked, multiSelectMode, selectedPlayers.size, playerPositions.length, ballPos.x, ballPos.y, runners.length, controlsCollapsed]);
+
+  // Compact layout (default)
+  // If renderControlsSeparately is true, only render FieldCanvas (controls rendered by parent)
+  if (renderControlsSeparately) {
+    return (
+      <View style={{ width: '100%', alignItems: 'center', paddingHorizontal: 10 }}>
+        <FieldCanvas
           fieldSize={fieldSize}
-          onPlayerPositionsChange={setPlayerPositions}
-          onBallPosChange={setBallPos}
-          onRunnersChange={setRunners}
-          onClose={handleClosePlayer}
+          playerPositions={playerPositions}
+          ballPos={ballPos}
+          runners={runners}
+          setContainerRef={setContainerRef}
+          handleLayout={handleLayout}
+          webEventHandlers={webEventHandlers}
+          renderPlayer={renderPlayer}
+          renderBall={renderBall}
+          renderRunner={renderRunner}
+          layoutMode="compact"
         />
-      )}
+      </View>
+    );
+  }
+
+  // Default compact layout (both canvas and controls together)
+  return (
+    <View style={{ width: '100%', alignItems: 'center', paddingHorizontal: 10 }}>
+      <FieldCanvas
+        fieldSize={fieldSize}
+        playerPositions={playerPositions}
+        ballPos={ballPos}
+        runners={runners}
+        setContainerRef={setContainerRef}
+        handleLayout={handleLayout}
+        webEventHandlers={webEventHandlers}
+        renderPlayer={renderPlayer}
+        renderBall={renderBall}
+        renderRunner={renderRunner}
+        layoutMode="compact"
+      />
+      
+      <FieldControls {...controlsProps} />
     </View>
   );
 }
+
+// Export components for external use
+export { FieldCanvas, FieldControls };
