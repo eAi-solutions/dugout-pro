@@ -4,10 +4,11 @@ import BaseballFieldImage from './BaseballFieldImage';
 import ScenarioRecorder from './ScenarioRecorder';
 import ScenarioPlayer from './ScenarioPlayer';
 import ScenarioLibrary from './ScenarioLibrary';
-import PasswordPrompt from './PasswordPrompt';
 import { FieldScenario } from '../Data/Models/fieldScenarios';
-import { saveScenario } from '../Data/Store/scenarioStorage';
-import { DEV_PASSWORD, IS_DEV_MODE } from '../Config/devConfig';
+import { upsertScenario } from '../services/scenarioStore';
+import { useAuth } from '../lib/AuthContext';
+import { useCoachMode } from '../lib/CoachModeContext';
+import CoachModeControls from './CoachModeControls';
 
 // Constants for marker sizes and offsets
 const MARKER_SIZES = {
@@ -113,6 +114,9 @@ const convertPositionsToPixels = (fieldSize: number): PlayerPosition[] => {
 };
 
 export default function InteractiveField({ onReset }: InteractiveFieldProps) {
+  const { user } = useAuth();
+  const { coachModeUnlocked } = useCoachMode();
+  
   // Use actual rendered container width as single source of truth
   const [fieldSize, setFieldSize] = useState(0);
   const fieldWidth = fieldSize;
@@ -136,8 +140,6 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   const [showLibrary, setShowLibrary] = useState(false);
   const [currentScenario, setCurrentScenario] = useState<FieldScenario | null>(null);
   const [isPlayingScenario, setIsPlayingScenario] = useState(false);
-  const [isDevAuthenticated, setIsDevAuthenticated] = useState(false); // Always require password
-  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
 
   // Convert normalized positions to pixels when field size changes
   useEffect(() => {
@@ -197,15 +199,39 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
 
   // Scenario handlers
   const handleSaveScenario = useCallback(async (scenario: FieldScenario) => {
-    const success = await saveScenario(scenario);
-    if (success) {
-      setShowRecorder(false);
-      // Optionally show success message
-    } else {
-      // Handle error - could show alert
-      console.error('Failed to save scenario');
+    // Coach Mode guard: prevent save/overwrite if Coach Mode is OFF
+    if (!coachModeUnlocked) {
+      Alert.alert('Coach Mode Required', 'Coach Mode required to save or overwrite scenarios');
+      throw new Error('Coach Mode required to save scenarios');
     }
-  }, []);
+
+    // Validate scenario object
+    if (!scenario.id || typeof scenario.id !== 'string' || scenario.id.trim() === '') {
+      throw new Error('Scenario must have a valid ID');
+    }
+    if (!scenario.name || typeof scenario.name !== 'string' || scenario.name.trim() === '') {
+      throw new Error('Scenario must have a valid name');
+    }
+
+    if (!user) {
+      throw new Error('Please log in to save scenarios');
+    }
+
+    // Add timeout around upsertScenario call (10 seconds)
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Save timed out after 10s at step: calling upsertScenario')), 10000);
+    });
+
+    const upsertPromise = upsertScenario(scenario);
+    const result = await Promise.race([upsertPromise, timeoutPromise]);
+
+    if (result.error) {
+      throw new Error(result.error.message || 'Failed to save scenario');
+    }
+
+    Alert.alert('Success', 'Scenario saved!');
+    setShowRecorder(false);
+  }, [user, coachModeUnlocked]);
 
   const handleSelectScenario = useCallback((scenario: FieldScenario) => {
     setCurrentScenario(scenario);
@@ -242,31 +268,12 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
   }, []);
 
   const handleRecordButtonPress = useCallback(() => {
-    console.log('Record button pressed, isDevAuthenticated:', isDevAuthenticated);
-    if (isDevAuthenticated) {
-      setShowRecorder(true);
-    } else {
-      console.log('Showing password prompt');
-      setShowPasswordPrompt(true);
+    if (!coachModeUnlocked) {
+      Alert.alert('Coach Mode Required', 'Please unlock Coach Mode to record scenarios');
+      return;
     }
-  }, [isDevAuthenticated]);
-
-  const handlePasswordConfirm = useCallback((password: string) => {
-    console.log('Password entered, checking against:', DEV_PASSWORD);
-    if (password === DEV_PASSWORD) {
-      console.log('Password correct, authenticating');
-      setIsDevAuthenticated(true);
-      setShowPasswordPrompt(false);
-      setShowRecorder(true);
-    } else {
-      console.log('Password incorrect');
-      if (Platform.OS === 'web') {
-        alert('Incorrect password');
-      } else {
-        Alert.alert('Error', 'Incorrect password');
-      }
-    }
-  }, []);
+    setShowRecorder(true);
+  }, [coachModeUnlocked]);
 
   const fieldContainerRef = useRef<View>(null);
   const containerDOMRef = useRef<HTMLElement | null>(null);
@@ -900,6 +907,11 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>Reset Positions</Text>
       </TouchableOpacity>
 
+      {/* Coach Mode Controls */}
+      {!showRecorder && (
+        <CoachModeControls />
+      )}
+
       {/* Scenario Controls */}
       <View style={{ 
         marginTop: 20,
@@ -920,12 +932,17 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
               style={{ 
                 paddingHorizontal: 20, 
                 paddingVertical: 10, 
-                backgroundColor: '#9b59b6', 
-                borderRadius: 8
+                backgroundColor: coachModeUnlocked ? '#9b59b6' : '#999', 
+                borderRadius: 8,
+                opacity: coachModeUnlocked ? 1 : 0.6,
               }}
               onPress={handleRecordButtonPress}
+              disabled={!coachModeUnlocked}
             >
-              <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>📹 Record Scenario</Text>
+              <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>
+                📹 Record Scenario
+                {!coachModeUnlocked && ' (Coach Mode Required)'}
+              </Text>
             </TouchableOpacity>
             
             <TouchableOpacity
@@ -1028,21 +1045,12 @@ export default function InteractiveField({ onReset }: InteractiveFieldProps) {
         </View>
       )}
 
-      {/* Password Prompt */}
-      <PasswordPrompt
-        visible={showPasswordPrompt}
-        onConfirm={handlePasswordConfirm}
-        onCancel={() => setShowPasswordPrompt(false)}
-        title="Password Required"
-        message="Enter the password to record scenarios:"
-      />
-
       {/* Scenario Library Modal */}
       <ScenarioLibrary
         visible={showLibrary}
         onSelectScenario={handleSelectScenario}
         onClose={() => setShowLibrary(false)}
-        isDevMode={isDevAuthenticated}
+        isDevMode={coachModeUnlocked}
       />
 
       {/* Scenario Player Overlay */}

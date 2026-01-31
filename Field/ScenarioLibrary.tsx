@@ -1,76 +1,117 @@
 // Component for browsing and managing saved scenarios
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Modal, Alert, TextInput, Platform } from 'react-native';
-import { StoredScenario, getScenariosList, getScenario, deleteScenario } from '../Data/Store/scenarioStorage';
 import { FieldScenario } from '../Data/Models/fieldScenarios';
+import { listScenarios, getScenario, deleteScenario } from '../services/scenarioStore';
+import { useAuth } from '../lib/AuthContext';
+import { useCoachMode } from '../lib/CoachModeContext';
 
 interface ScenarioLibraryProps {
   visible: boolean;
   onSelectScenario: (scenario: FieldScenario) => void;
   onClose: () => void;
-  isDevMode?: boolean;
+  isDevMode?: boolean; // Deprecated: use Coach Mode instead
 }
 
 export default function ScenarioLibrary({ visible, onSelectScenario, onClose, isDevMode = false }: ScenarioLibraryProps) {
-  const [scenarios, setScenarios] = useState<StoredScenario[]>([]);
+  const { coachModeUnlocked } = useCoachMode();
+  // Use Coach Mode if available, fallback to isDevMode for backward compatibility
+  const canDelete = coachModeUnlocked || isDevMode;
+  const [scenarios, setScenarios] = useState<FieldScenario[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  
-  // Debug log
-  useEffect(() => {
-    console.log('ScenarioLibrary isDevMode:', isDevMode);
-  }, [isDevMode]);
+  const { user } = useAuth();
 
-  const loadScenarios = async () => {
+  const loadScenarios = useCallback(async () => {
+    if (!user) {
+      setError('Please log in to view scenarios');
+      setScenarios([]);
+      return;
+    }
+
     setLoading(true);
+    setError(null);
     try {
-      const list = await getScenariosList();
-      setScenarios(list);
+      const result = await listScenarios();
+      if (result.error) {
+        setError(result.error.message);
+        setScenarios([]);
+      } else {
+        setScenarios(result.data || []);
+      }
     } catch (error) {
-      console.error('Error loading scenarios:', error);
-      Alert.alert('Error', 'Failed to load scenarios');
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load scenarios';
+      setError(errorMessage);
+      setScenarios([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
   useEffect(() => {
-    if (visible) {
+    if (visible && user) {
       loadScenarios();
     }
-  }, [visible]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, user]); // loadScenarios is stable when user doesn't change
 
   const handleSelectScenario = async (scenarioId: string) => {
+    // First try to use scenario from the list if available
+    const scenarioFromList = scenarios.find(s => s.id === scenarioId);
+    if (scenarioFromList) {
+      onSelectScenario(scenarioFromList);
+      onClose();
+      return;
+    }
+
+    // Otherwise fetch from Supabase
     try {
-      const scenario = await getScenario(scenarioId);
-      if (scenario) {
-        onSelectScenario(scenario);
+      const result = await getScenario(scenarioId);
+      if (result.error) {
+        Alert.alert('Error', result.error.message);
+      } else if (result.data) {
+        onSelectScenario(result.data);
         onClose();
       } else {
-        Alert.alert('Error', 'Failed to load scenario');
+        Alert.alert('Error', 'Scenario not found');
       }
     } catch (error) {
-      console.error('Error loading scenario:', error);
-      Alert.alert('Error', 'Failed to load scenario');
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load scenario';
+      Alert.alert('Error', errorMessage);
     }
   };
 
   const handleDeleteScenario = (scenarioId: string, scenarioName: string) => {
+    // Coach Mode guard: prevent deletion if Coach Mode is OFF
+    if (!canDelete) {
+      Alert.alert('View only: Coach Mode required', 'Coach Mode required to delete scenarios');
+      return;
+    }
+
+    const performDelete = async () => {
+      // Double-check Coach Mode before calling Supabase
+      if (!canDelete) {
+        Alert.alert('View only: Coach Mode required', 'Coach Mode required to delete scenarios');
+        return;
+      }
+
+      const result = await deleteScenario(scenarioId);
+      if (result.error) {
+        Alert.alert('Error', result.error.message);
+      } else {
+        // Refresh the list after successful deletion
+        await loadScenarios();
+      }
+    };
+
     if (Platform.OS === 'web') {
       // Use window.confirm for web
       if (window.confirm(`Are you sure you want to delete "${scenarioName}"?`)) {
-        deleteScenario(scenarioId)
-          .then((success) => {
-            if (success) {
-              loadScenarios();
-            } else {
-              alert('Failed to delete scenario');
-            }
-          })
-          .catch((error) => {
-            console.error('Error deleting scenario:', error);
-            alert('Failed to delete scenario');
-          });
+        performDelete().catch((error) => {
+          console.error('Error deleting scenario:', error);
+          alert('Failed to delete scenario');
+        });
       }
     } else {
       // Use Alert for native
@@ -82,19 +123,7 @@ export default function ScenarioLibrary({ visible, onSelectScenario, onClose, is
           {
             text: 'Delete',
             style: 'destructive',
-            onPress: async () => {
-              try {
-                const success = await deleteScenario(scenarioId);
-                if (success) {
-                  await loadScenarios();
-                } else {
-                  Alert.alert('Error', 'Failed to delete scenario');
-                }
-              } catch (error) {
-                console.error('Error deleting scenario:', error);
-                Alert.alert('Error', 'Failed to delete scenario');
-              }
-            },
+            onPress: performDelete,
           },
         ]
       );
@@ -136,6 +165,23 @@ export default function ScenarioLibrary({ visible, onSelectScenario, onClose, is
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
             <Text style={{ fontSize: 16, color: '#666' }}>Loading scenarios...</Text>
           </View>
+        ) : error ? (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+            <Text style={{ fontSize: 16, color: '#f44336', textAlign: 'center', marginBottom: 10 }}>
+              {error}
+            </Text>
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#2196F3',
+                padding: 12,
+                borderRadius: 8,
+                paddingHorizontal: 20,
+              }}
+              onPress={loadScenarios}
+            >
+              <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold' }}>Retry</Text>
+            </TouchableOpacity>
+          </View>
         ) : filteredScenarios.length === 0 ? (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
             <Text style={{ fontSize: 16, color: '#666', textAlign: 'center' }}>
@@ -158,11 +204,11 @@ export default function ScenarioLibrary({ visible, onSelectScenario, onClose, is
                   borderColor: '#ddd',
                 }}
               >
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5, alignItems: 'center' }}>
                   <Text style={{ fontSize: 18, fontWeight: 'bold', flex: 1 }}>
                     {scenario.name}
                   </Text>
-                  {isDevMode && (
+                  {canDelete ? (
                     <TouchableOpacity
                       style={{
                         backgroundColor: '#f44336',
@@ -174,7 +220,7 @@ export default function ScenarioLibrary({ visible, onSelectScenario, onClose, is
                     >
                       <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>Delete</Text>
                     </TouchableOpacity>
-                  )}
+                  ) : null}
                 </View>
                 
                 {scenario.description && (
