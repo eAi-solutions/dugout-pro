@@ -735,27 +735,64 @@ export default function ScenarioPlayer({
         borderTopRightRadius: 15,
       }),
     }}>
-      <View style={{ marginBottom: dockMode ? 8 : 10 }}>
-        <Text style={{ color: 'white', fontSize: dockMode ? 16 : 18, fontWeight: 'bold', marginBottom: dockMode ? 3 : 5 }}>
+      {/* Header: Title + Time (fixed, flexShrink: 0) - Always visible */}
+      <View style={{ 
+        marginBottom: dockMode ? 6 : 8,
+        flexShrink: 0, // Prevent header from shrinking
+      }}>
+        <Text 
+          style={{ 
+            color: 'white', 
+            fontSize: dockMode ? 16 : 18, 
+            fontWeight: 'bold', 
+            marginBottom: dockMode ? 3 : 5 
+          }}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
           {scenario.name}
         </Text>
-        {scenario.description && (
-          <Text style={{ color: '#ccc', fontSize: dockMode ? 12 : 14, marginBottom: dockMode ? 3 : 5 }}>
-            {scenario.description}
-          </Text>
-        )}
         <Text style={{ color: '#aaa', fontSize: 12 }}>
           {formatTime(currentTime)} / {formatTime((scenario.duration && scenario.duration > 0) ? scenario.duration : 1.0)}
         </Text>
       </View>
 
-      {/* Progress bar */}
+      {/* Notes: Bounded scrollable region (maxHeight + scroll) - Cannot push controls off-screen */}
+      {scenario.description && (
+        <View style={{ 
+          maxHeight: dockMode ? 48 : 60, // Constrained height in dockMode (~2-3 lines at 12px font)
+          marginBottom: dockMode ? 6 : 8,
+          flexShrink: 0, // Critical: Prevent notes container from expanding and pushing controls
+          overflow: 'hidden', // Ensure content doesn't overflow container
+        }}>
+          <ScrollView 
+            showsVerticalScrollIndicator={true}
+            style={{ flexGrow: 0 }}
+            contentContainerStyle={{ 
+              flexGrow: 0,
+              paddingRight: 4, // Space for scroll indicator
+            }}
+            bounces={false} // Prevent bounce on iOS that could affect layout
+          >
+            <Text style={{ 
+              color: '#ccc', 
+              fontSize: dockMode ? 12 : 14,
+              lineHeight: dockMode ? 16 : 18, // Consistent line height for accurate maxHeight calculation
+            }}>
+              {scenario.description}
+            </Text>
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Progress bar (fixed, flexShrink: 0) - Always visible */}
       <View style={{
         height: 4,
         backgroundColor: '#333',
         borderRadius: 2,
         marginBottom: dockMode ? 10 : 15,
         overflow: 'hidden',
+        flexShrink: 0, // Prevent progress bar from shrinking
       }}>
         <View style={{
           height: '100%',
@@ -764,8 +801,16 @@ export default function ScenarioPlayer({
         }} />
       </View>
 
-      {/* Controls */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: dockMode ? 6 : 10, flexWrap: 'wrap' }}>
+      {/* Controls: Always visible (fixed, flexShrink: 0) - Critical: Never pushed off-screen */}
+      <View style={{ 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        gap: dockMode ? 6 : 10, 
+        flexWrap: 'wrap',
+        flexShrink: 0, // Critical: Prevent controls from being pushed off-screen
+        minHeight: 44, // Ensure minimum height for touch targets
+      }}>
         <TouchableOpacity
           style={{
             backgroundColor: '#666',

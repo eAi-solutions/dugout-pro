@@ -14,7 +14,7 @@ interface FieldDiagramProps {
 }
 
 const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
-  const { width: windowWidth, height: screenHeight } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   
   // Responsive layout breakpoint
   const isCompact = windowWidth < 768;
@@ -38,13 +38,19 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
   } | null>(null);
   
   // Safe area calculations
-  const isLargeScreen = screenHeight > 800;
+  const isLargeScreen = windowHeight > 800;
   const statusBarHeight = Platform.OS === 'android' 
     ? (isLargeScreen ? 50 : 45)
     : 50;
   const bottomPadding = Platform.OS === 'android' 
     ? (isLargeScreen ? 30 : 25)
     : 40;
+  
+  // Calculate fixed field height for compact mode
+  // Clamp between 320 and 520, using 55% of window height as base
+  const fieldHeight = isCompact 
+    ? Math.max(320, Math.min(520, Math.floor(windowHeight * 0.55)))
+    : undefined;
   
   const resetPositions = () => {
     // This function is called by InteractiveField when reset is needed
@@ -81,8 +87,10 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
 
       {isCompact ? (
         <View style={styles.bodyContainer}>
-          {/* Top: FieldCanvas (as wide as possible) */}
-          <View style={styles.fieldCanvasContainer}>
+          {/* Header (fixed) - already rendered above */}
+          
+          {/* FieldCanvas container (fixed height; no vertical scrolling) */}
+          <View style={[styles.fieldCanvasContainer, { height: fieldHeight }]}>
             <InteractiveField 
               onReset={resetPositions} 
               layoutMode="compact"
@@ -93,35 +101,27 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
             />
           </View>
           
-          {/* Playback Dock - Renders when scenario is playing or paused */}
+          {/* Playback Dock (fixed height; does not overlay field) */}
           {playbackState && playbackState.isPlayingScenario && playbackState.currentScenario && (
-            <ScrollView 
-              style={styles.playbackDockScrollView}
-              contentContainerStyle={styles.playbackDockContent}
-              showsVerticalScrollIndicator={true}
-              nestedScrollEnabled={true}
-            >
-              <View style={styles.playbackDock}>
-                <ScenarioPlayer
-                  scenario={playbackState.currentScenario}
-                  fieldSize={playbackState.fieldSize}
-                  onPlayerPositionsChange={playbackState.setPlayerPositions}
-                  onBallPosChange={playbackState.setBallPos}
-                  onRunnersChange={playbackState.setRunners}
-                  onClose={playbackState.handleClosePlayer}
-                  dockMode={true}
-                />
-              </View>
-            </ScrollView>
+            <View style={styles.playbackDock}>
+              <ScenarioPlayer
+                scenario={playbackState.currentScenario}
+                fieldSize={playbackState.fieldSize}
+                onPlayerPositionsChange={playbackState.setPlayerPositions}
+                onBallPosChange={playbackState.setBallPos}
+                onRunnersChange={playbackState.setRunners}
+                onClose={playbackState.handleClosePlayer}
+                dockMode={true}
+              />
+            </View>
           )}
           
-          {/* Bottom: FieldControls in ScrollView (collapsed when popup is open) */}
+          {/* Controls ScrollView (this is the ONLY vertical scroll region) */}
           {!isPopupOpen && controlsProps ? (
             <ScrollView 
               style={styles.controlsScrollView}
               contentContainerStyle={styles.controlsScrollContent}
               showsVerticalScrollIndicator={true}
-              nestedScrollEnabled={true}
             >
               <FieldControls {...controlsProps} collapsed={false} />
             </ScrollView>
@@ -202,15 +202,17 @@ const styles = StyleSheet.create({
     // Wide layout: side-by-side layout handled by InteractiveField
   },
   fieldCanvasContainer: {
-    flex: 1,
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 10,
-    minHeight: 0, // Allow flex to shrink if needed
+    flexShrink: 0, // Prevent field from shrinking
+    // Height is set dynamically via inline style in compact mode
+    // In compact mode: fixed height (clamped between 320-520px based on window height)
+    // This ensures the field stays fixed and doesn't scroll
   },
   controlsScrollView: {
-    maxHeight: '40%',
+    flex: 1, // Takes remaining space after field and playback dock
     backgroundColor: '#f5f5f5',
     borderTopWidth: 1,
     borderTopColor: '#ddd',
@@ -234,16 +236,13 @@ const styles = StyleSheet.create({
   },
   playbackDock: {
     width: '100%',
-  },
-  playbackDockScrollView: {
-    width: '100%',
-    maxHeight: 140, // ~120-160px range, prevents field from being pushed off-screen
+    flexShrink: 0, // Prevent playback dock from shrinking
+    maxHeight: 180, // Constrain height to prevent pushing field off-screen
+    // Fixed height container - does not scroll, does not overlay field
+    // Height is determined by ScenarioPlayer content (up to maxHeight)
     backgroundColor: '#f5f5f5',
     borderTopWidth: 1,
     borderTopColor: '#ddd',
-  },
-  playbackDockContent: {
-    padding: 0,
   },
   playbackDockWide: {
     width: '100%',
