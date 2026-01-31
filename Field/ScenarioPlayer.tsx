@@ -75,6 +75,7 @@ export default function ScenarioPlayer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [notesExpanded, setNotesExpanded] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number | null>(null);
   const pausedTimeRef = useRef<number>(0);
@@ -760,7 +761,7 @@ export default function ScenarioPlayer({
       {/* Notes: Bounded scrollable region (maxHeight + scroll) - Cannot push controls off-screen */}
       {scenario.description && (
         <View style={{ 
-          maxHeight: dockMode ? 48 : 60, // Constrained height in dockMode (~2-3 lines at 12px font)
+          maxHeight: dockMode ? (notesExpanded ? 160 : 80) : 60, // Constrained height in dockMode (~2-3 lines at 12px font)
           marginBottom: dockMode ? 6 : 8,
           flexShrink: 0, // Critical: Prevent notes container from expanding and pushing controls
           overflow: 'hidden', // Ensure content doesn't overflow container
@@ -783,6 +784,27 @@ export default function ScenarioPlayer({
             </Text>
           </ScrollView>
         </View>
+      )}
+
+      {/* Notes toggle (dockMode only) */}
+      {scenario.description && dockMode && (
+        <TouchableOpacity
+          onPress={() => setNotesExpanded(!notesExpanded)}
+          style={{
+            alignSelf: 'flex-end',
+            marginBottom: 4,
+            paddingVertical: 2,
+            paddingHorizontal: 4,
+            flexShrink: 0,
+          }}
+        >
+          <Text style={{ 
+            color: '#888', 
+            fontSize: 12,
+          }}>
+            {notesExpanded ? 'Less' : 'More'}
+          </Text>
+        </TouchableOpacity>
       )}
 
       {/* Progress bar (fixed, flexShrink: 0) - Always visible */}
