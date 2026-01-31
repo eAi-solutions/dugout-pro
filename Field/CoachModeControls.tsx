@@ -1,10 +1,11 @@
 // Coach Mode controls for main entry screen
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Modal, Alert, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Modal, Alert, Platform, ActivityIndicator } from 'react-native';
 import { useCoachMode } from '../lib/CoachModeContext';
+import { isValidCoachPin } from '../lib/coachPin';
 
 export default function CoachModeControls() {
-  const { coachModeUnlocked, hasCoachPin, unlockCoachMode, lockCoachMode, setCoachPin, changeCoachPin } = useCoachMode();
+  const { coachModeUnlocked, hasCoachPin, loadingCoachPin, unlockCoachMode, lockCoachMode, setCoachPin, changeCoachPin } = useCoachMode();
   const [showPinModal, setShowPinModal] = useState(false);
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
@@ -13,41 +14,42 @@ export default function CoachModeControls() {
   const [currentPin, setCurrentPin] = useState('');
 
   const handleUnlockPress = () => {
-    setIsSettingPin(!hasCoachPin);
-    setIsChangingPin(false);
+    // If hasCoachPin === false, only allow "Set Coach PIN"
+    // If hasCoachPin === true, only allow "Unlock"
+    if (!hasCoachPin) {
+      setIsSettingPin(true);
+      setIsChangingPin(false);
+    } else {
+      setIsSettingPin(false);
+      setIsChangingPin(false);
+    }
     setShowPinModal(true);
   };
 
   const handleLockPress = () => {
-    if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined' && window.confirm('Lock Coach Mode?')) {
-        lockCoachMode();
-      }
-    } else {
-      Alert.alert(
-        'Lock Coach Mode',
-        'Are you sure you want to lock Coach Mode?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Lock',
-            style: 'destructive',
-            onPress: lockCoachMode,
-          },
-        ]
-      );
-    }
+    // Immediate lock (session-only, no confirmation needed)
+    lockCoachMode();
   };
 
   const handleChangePinPress = () => {
+    // Only allow change PIN if hasCoachPin === true and coachModeUnlocked === true
+    if (!hasCoachPin) {
+      Alert.alert('Error', 'Coach PIN must be set first');
+      return;
+    }
+    if (!coachModeUnlocked) {
+      Alert.alert('Error', 'Coach Mode must be unlocked to change PIN');
+      return;
+    }
     setIsChangingPin(true);
     setIsSettingPin(false);
     setShowPinModal(true);
   };
 
   const handleSetPin = async () => {
-    if (pin.length < 4 || pin.length > 8) {
-      Alert.alert('Error', 'PIN must be between 4 and 8 digits');
+    // Validate 4-8 digits (numeric only)
+    if (!isValidCoachPin(pin)) {
+      Alert.alert('Error', 'PIN must be 4-8 digits (numeric only)');
       return;
     }
     if (pin !== confirmPin) {
@@ -55,50 +57,92 @@ export default function CoachModeControls() {
       return;
     }
     try {
+      // setCoachPin() handles hashing via hashCoachPin() and saves to profiles.coach_pin_hash
+      // On success, automatically unlocks for this session
       await setCoachPin(pin);
       setShowPinModal(false);
       setPin('');
       setConfirmPin('');
-      Alert.alert('Success', 'Coach PIN set and Coach Mode unlocked');
+      // No need for success alert - unlock state change is visible in UI
     } catch (error) {
       Alert.alert('Error', error instanceof Error ? error.message : 'Failed to set Coach PIN');
     }
   };
 
   const handleEnterPin = async () => {
-    if (pin.length < 4) {
-      Alert.alert('Error', 'Please enter a valid PIN');
+    // Defensive check: only allow unlock if PIN is set
+    if (!hasCoachPin) {
+      Alert.alert('Error', 'Coach PIN must be set first');
+      setShowPinModal(false);
       return;
     }
+    // Validate 4-8 digits (numeric only)
+    if (!isValidCoachPin(pin)) {
+      Alert.alert('Error', 'PIN must be 4-8 digits (numeric only)');
+      return;
+    }
+    // unlockCoachMode() uses verifyCoachPin(pin, coachPinHash) internally
     const success = await unlockCoachMode(pin);
     if (success) {
       setShowPinModal(false);
       setPin('');
-      Alert.alert('Success', 'Coach Mode unlocked');
+      // No need for success alert - unlock state change is visible in UI
     } else {
+      // Show error if incorrect PIN
       Alert.alert('Error', 'Incorrect PIN');
       setPin('');
     }
   };
 
   const handleChangePin = async () => {
-    if (currentPin.length < 4 || pin.length < 4 || pin.length > 8) {
-      Alert.alert('Error', 'Please enter valid PINs (4-8 digits)');
+    // Defensive check: only allow change PIN if PIN is set and unlocked
+    if (!hasCoachPin) {
+      Alert.alert('Error', 'Coach PIN must be set first');
+      setShowPinModal(false);
       return;
     }
+    if (!coachModeUnlocked) {
+      Alert.alert('Error', 'Coach Mode must be unlocked to change PIN');
+      setShowPinModal(false);
+      return;
+    }
+    // Validate current PIN
+    if (!isValidCoachPin(currentPin)) {
+      Alert.alert('Error', 'Current PIN must be 4-8 digits (numeric only)');
+      return;
+    }
+    // Validate new PIN
+    if (!isValidCoachPin(pin)) {
+      Alert.alert('Error', 'New PIN must be 4-8 digits (numeric only)');
+      return;
+    }
+    // Validate PINs match
     if (pin !== confirmPin) {
       Alert.alert('Error', 'New PINs do not match');
       return;
     }
-    const success = await changeCoachPin(currentPin, pin);
-    if (success) {
-      setShowPinModal(false);
-      setPin('');
-      setConfirmPin('');
-      setCurrentPin('');
-      Alert.alert('Success', 'Coach PIN changed successfully');
-    } else {
-      Alert.alert('Error', 'Incorrect current PIN');
+    // Validate new PIN is different from current
+    if (currentPin === pin) {
+      Alert.alert('Error', 'New PIN must be different from current PIN');
+      return;
+    }
+    try {
+      // changeCoachPin() uses verifyCoachPin() and hashCoachPin() internally
+      // Keeps current session unlocked after successful change
+      const success = await changeCoachPin(currentPin, pin);
+      if (success) {
+        setShowPinModal(false);
+        setPin('');
+        setConfirmPin('');
+        setCurrentPin('');
+        setIsChangingPin(false);
+        Alert.alert('Success', 'Coach PIN changed successfully');
+      } else {
+        Alert.alert('Error', 'Incorrect current PIN. Please try again.');
+        setCurrentPin('');
+      }
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to change Coach PIN');
       setCurrentPin('');
     }
   };
@@ -141,22 +185,26 @@ export default function CoachModeControls() {
                 : 'Coach Mode required to record or modify scenarios'}
             </Text>
           </View>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {coachModeUnlocked ? (
+          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+            {loadingCoachPin ? (
+              <ActivityIndicator size="small" color="#666" />
+            ) : coachModeUnlocked ? (
               <>
-                <TouchableOpacity
-                  style={{
-                    paddingHorizontal: 12,
-                    paddingVertical: 6,
-                    backgroundColor: '#ff9800',
-                    borderRadius: 6,
-                  }}
-                  onPress={handleChangePinPress}
-                >
-                  <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>
-                    Change PIN
-                  </Text>
-                </TouchableOpacity>
+                {hasCoachPin && (
+                  <TouchableOpacity
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      backgroundColor: '#ff9800',
+                      borderRadius: 6,
+                    }}
+                    onPress={handleChangePinPress}
+                  >
+                    <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>
+                      Change PIN
+                    </Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   style={{
                     paddingHorizontal: 12,
@@ -171,7 +219,7 @@ export default function CoachModeControls() {
                   </Text>
                 </TouchableOpacity>
               </>
-            ) : (
+            ) : hasCoachPin ? (
               <TouchableOpacity
                 style={{
                   paddingHorizontal: 12,
@@ -183,6 +231,20 @@ export default function CoachModeControls() {
               >
                 <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>
                   Unlock Coach Mode
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={{
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  backgroundColor: '#4CAF50',
+                  borderRadius: 6,
+                }}
+                onPress={handleUnlockPress}
+              >
+                <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>
+                  Set Coach PIN
                 </Text>
               </TouchableOpacity>
             )}
@@ -218,7 +280,7 @@ export default function CoachModeControls() {
             }}>
               {isChangingPin 
                 ? 'Change Coach PIN'
-                : isSettingPin 
+                : isSettingPin || !hasCoachPin
                   ? 'Set Coach PIN'
                   : 'Enter Coach PIN'}
             </Text>
@@ -229,10 +291,10 @@ export default function CoachModeControls() {
               marginBottom: 15,
             }}>
               {isChangingPin
-                ? 'Enter your current PIN, then set a new PIN (4-8 digits):'
+                ? 'Enter your current PIN, then set a new PIN (4-8 digits, numeric only):'
                 : isSettingPin 
-                  ? 'Create a PIN to protect Coach Mode features (4-8 digits). This PIN will be required to unlock Coach Mode in the future.'
-                  : 'Enter your Coach PIN to unlock Coach Mode:'}
+                  ? 'Create a PIN to protect Coach Mode features (4-8 digits, numeric only). This PIN will be required to unlock Coach Mode in the future.'
+                  : 'Enter your Coach PIN to unlock Coach Mode (4-8 digits, numeric only):'}
             </Text>
 
             {isChangingPin && (
@@ -247,7 +309,11 @@ export default function CoachModeControls() {
                   marginBottom: 15,
                 }}
                 value={currentPin}
-                onChangeText={setCurrentPin}
+                onChangeText={(text) => {
+                  // Only allow numeric input
+                  const numericText = text.replace(/[^0-9]/g, '');
+                  setCurrentPin(numericText);
+                }}
                 placeholder="Current PIN"
                 secureTextEntry={true}
                 autoFocus={true}
@@ -267,7 +333,11 @@ export default function CoachModeControls() {
                 marginBottom: (isSettingPin || isChangingPin) ? 15 : 20,
               }}
               value={pin}
-              onChangeText={setPin}
+              onChangeText={(text) => {
+                // Only allow numeric input
+                const numericText = text.replace(/[^0-9]/g, '');
+                setPin(numericText);
+              }}
               placeholder={isChangingPin ? 'New PIN (4-8 digits)' : isSettingPin ? 'Enter PIN (4-8 digits)' : 'Enter PIN'}
               secureTextEntry={true}
               autoFocus={!isChangingPin}
@@ -287,7 +357,11 @@ export default function CoachModeControls() {
                   marginBottom: 20,
                 }}
                 value={confirmPin}
-                onChangeText={setConfirmPin}
+                onChangeText={(text) => {
+                  // Only allow numeric input
+                  const numericText = text.replace(/[^0-9]/g, '');
+                  setConfirmPin(numericText);
+                }}
                 placeholder="Confirm PIN"
                 secureTextEntry={true}
                 keyboardType="numeric"
@@ -322,10 +396,10 @@ export default function CoachModeControls() {
                   backgroundColor: '#9b59b6',
                   borderRadius: 8,
                 }}
-                onPress={isChangingPin ? handleChangePin : (isSettingPin ? handleSetPin : handleEnterPin)}
+                onPress={isChangingPin ? handleChangePin : (isSettingPin || !hasCoachPin ? handleSetPin : handleEnterPin)}
               >
                 <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>
-                  {isChangingPin ? 'Change PIN' : (isSettingPin ? 'Set PIN' : 'Unlock')}
+                  {isChangingPin ? 'Change PIN' : (isSettingPin || !hasCoachPin ? 'Set PIN' : 'Unlock')}
                 </Text>
               </TouchableOpacity>
             </View>

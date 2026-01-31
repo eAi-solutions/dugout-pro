@@ -1,88 +1,16 @@
 // CoachModeProvider with React context for Coach Mode state and PIN management
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { Platform } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const COACH_PIN_HASH_KEY = 'coach_pin_hash';
-const COACH_MODE_UNLOCKED_KEY = 'coachModeUnlocked';
-
-// Platform-specific storage abstraction
-// Uses localStorage on web, AsyncStorage on native
-const storage = {
-  getItem: async (key: string): Promise<string | null> => {
-    if (Platform.OS === 'web') {
-      // Use localStorage on web
-      try {
-        return localStorage.getItem(key);
-      } catch (error) {
-        console.error('Error reading from localStorage:', error);
-        return null;
-      }
-    } else {
-      // Use AsyncStorage on native
-      try {
-        return await AsyncStorage.getItem(key);
-      } catch (error) {
-        console.error('Error reading from AsyncStorage:', error);
-        return null;
-      }
-    }
-  },
-  setItem: async (key: string, value: string): Promise<void> => {
-    if (Platform.OS === 'web') {
-      // Use localStorage on web
-      try {
-        localStorage.setItem(key, value);
-      } catch (error) {
-        console.error('Error writing to localStorage:', error);
-        throw error;
-      }
-    } else {
-      // Use AsyncStorage on native
-      try {
-        await AsyncStorage.setItem(key, value);
-      } catch (error) {
-        console.error('Error writing to AsyncStorage:', error);
-        throw error;
-      }
-    }
-  },
-};
-
-// Simple hash function for PIN (using a basic algorithm that works in React Native)
-// In production, consider using a proper crypto library
-async function hashPin(pin: string): Promise<string> {
-  // Use Web Crypto API if available (web), otherwise use a simple hash
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(pin);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  }
-  // Fallback: simple hash for React Native (not cryptographically secure but better than plaintext)
-  let hash = 0;
-  for (let i = 0; i < pin.length; i++) {
-    const char = pin.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  // Add salt and convert to hex-like string
-  const salt = 'coach_mode_salt_2024';
-  let saltedHash = 0;
-  for (let i = 0; i < (pin + salt).length; i++) {
-    const char = (pin + salt).charCodeAt(i);
-    saltedHash = ((saltedHash << 5) - saltedHash) + char;
-    saltedHash = saltedHash & saltedHash;
-  }
-  return Math.abs(saltedHash).toString(16).padStart(16, '0');
-}
+import { useAuth } from './AuthContext';
+import { supabase } from './supabase';
+import { verifyCoachPin, hashCoachPin } from './coachPin';
 
 interface CoachModeContextType {
   coachModeUnlocked: boolean;
   hasCoachPin: boolean;
+  loadingCoachPin: boolean;
+  coachPinHash: string | null;
   unlockCoachMode: (pin: string) => Promise<boolean>;
-  lockCoachMode: () => Promise<void>;
+  lockCoachMode: () => void;
   setCoachPin: (pin: string) => Promise<void>;
   changeCoachPin: (currentPin: string, newPin: string) => Promise<boolean>;
   checkCoachPin: (pin: string) => Promise<boolean>;
@@ -103,51 +31,136 @@ interface CoachModeProviderProps {
 }
 
 export function CoachModeProvider({ children }: CoachModeProviderProps) {
+  const { user } = useAuth();
   const [coachModeUnlocked, setCoachModeUnlocked] = useState(false);
   const [hasCoachPin, setHasCoachPin] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loadingCoachPin, setLoadingCoachPin] = useState(true);
+  const [coachPinHash, setCoachPinHash] = useState<string | null>(null);
 
-  // Load initial state from platform-specific storage
-  // Coach Mode always starts locked on app launch (session-based security)
+  /**
+   * Internal helper: Fetches coach_pin_hash from Supabase profiles table
+   * Single source of truth for all PIN hash reads
+   * @param userId - The user ID to fetch the hash for
+   * @returns Promise resolving to the hash string or null if not set/error
+   * @throws Never throws - returns null on errors (fail locked)
+   */
+  const fetchCoachPinHash = async (userId: string): Promise<string | null> => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('coach_pin_hash')
+        .eq('id', userId)
+        .single();
+
+      if (error) {
+        // Fail locked: treat errors as no PIN (secure default)
+        console.error('Error fetching coach PIN hash:', error);
+        return null;
+      }
+
+      return data?.coach_pin_hash || null;
+    } catch (error) {
+      // Fail locked: treat exceptions as no PIN (secure default)
+      console.error('Exception fetching coach PIN hash:', error);
+      return null;
+    }
+  };
+
+  /**
+   * Internal helper: Updates coach_pin_hash in Supabase profiles table
+   * Single source of truth for all PIN hash writes
+   * @param userId - The user ID to update the hash for
+   * @param newHash - The new hash value to set
+   * @param expectedCurrentHash - Optional: if provided, only update if current hash matches (optimistic locking)
+   * @returns Promise resolving when update succeeds
+   * @throws Error if update fails (caller must handle - never unlocks on error)
+   */
+  const updateCoachPinHash = async (
+    userId: string,
+    newHash: string,
+    expectedCurrentHash?: string | null
+  ): Promise<void> => {
+    let query = supabase
+      .from('profiles')
+      .update({ coach_pin_hash: newHash })
+      .eq('id', userId);
+
+    // Optimistic locking: only update if hash matches expected value
+    if (expectedCurrentHash !== undefined) {
+      if (expectedCurrentHash === null) {
+        query = query.is('coach_pin_hash', null);
+      } else {
+        query = query.eq('coach_pin_hash', expectedCurrentHash);
+      }
+    }
+
+    const { error, data } = await query.select('coach_pin_hash').single();
+
+    if (error) {
+      throw new Error(`Failed to update Coach PIN: ${error.message}`);
+    }
+
+    // Verify the update succeeded
+    if (!data?.coach_pin_hash || data.coach_pin_hash !== newHash) {
+      throw new Error('Failed to verify Coach PIN was updated');
+    }
+  };
+
+  // Fetch coach_pin_hash from public.profiles when user is authenticated
   useEffect(() => {
-    const loadState = async () => {
-      try {
-        // Only load PIN hash to check if PIN exists
-        // Always start locked regardless of stored state
-        const pinHash = await storage.getItem(COACH_PIN_HASH_KEY);
-        
-        // Force locked state on startup (ignore stored unlocked state)
+    const loadCoachPinHash = async () => {
+      // Reset state when no user
+      if (!user?.id) {
+        setCoachPinHash(null);
+        setHasCoachPin(false);
         setCoachModeUnlocked(false);
-        setHasCoachPin(!!pinHash);
+        setLoadingCoachPin(false);
+        return;
+      }
+
+      try {
+        setLoadingCoachPin(true);
         
-        // Clear stored unlocked state to keep storage clean
-        await storage.setItem(COACH_MODE_UNLOCKED_KEY, 'false');
+        // Use internal helper for single source of truth
+        const hash = await fetchCoachPinHash(user.id);
+        
+        setCoachPinHash(hash);
+        setHasCoachPin(!!hash);
+
+        // Always start locked on app load (session-only unlock state)
+        setCoachModeUnlocked(false);
       } catch (error) {
-        console.error('Error loading Coach Mode state:', error);
-        // Ensure locked state even on error
+        // Fail locked: treat errors as no PIN
+        console.error('Exception loading coach PIN hash:', error);
+        setCoachPinHash(null);
+        setHasCoachPin(false);
         setCoachModeUnlocked(false);
       } finally {
-        setLoading(false);
+        setLoadingCoachPin(false);
       }
     };
 
-    loadState();
-  }, []);
+    loadCoachPinHash();
+  }, [user?.id]);
 
-  // Note: CoachModeProvider is only mounted when user is authenticated
-  // When user logs out, this component unmounts, so no need to watch for user changes
-  // Coach Mode state is automatically reset on unmount and will be locked on next mount
+  // Lock Coach Mode and clear PIN hash state on logout
+  useEffect(() => {
+    if (!user) {
+      setCoachModeUnlocked(false);
+      setCoachPinHash(null);
+      setHasCoachPin(false);
+    }
+  }, [user]);
 
   const unlockCoachMode = async (pin: string): Promise<boolean> => {
     try {
-      const storedPinHash = await storage.getItem(COACH_PIN_HASH_KEY);
-      if (!storedPinHash) {
+      if (!coachPinHash) {
         return false; // No PIN set
       }
       
-      const pinHash = await hashPin(pin);
-      if (storedPinHash === pinHash) {
-        await storage.setItem(COACH_MODE_UNLOCKED_KEY, 'true');
+      const isValid = await verifyCoachPin(pin, coachPinHash);
+      if (isValid) {
+        // Session-only unlock state (not persisted)
         setCoachModeUnlocked(true);
         return true;
       }
@@ -158,49 +171,92 @@ export function CoachModeProvider({ children }: CoachModeProviderProps) {
     }
   };
 
-  const lockCoachMode = async (): Promise<void> => {
-    try {
-      await storage.setItem(COACH_MODE_UNLOCKED_KEY, 'false');
-      setCoachModeUnlocked(false);
-    } catch (error) {
-      console.error('Error locking Coach Mode:', error);
-    }
+  const lockCoachMode = (): void => {
+    // Session-only unlock state (not persisted)
+    setCoachModeUnlocked(false);
   };
 
   const setCoachPin = async (pin: string): Promise<void> => {
+    if (!user?.id) {
+      throw new Error('User must be authenticated to set Coach PIN');
+    }
+
     try {
-      if (pin.length < 4 || pin.length > 8) {
-        throw new Error('PIN must be between 4 and 8 digits');
+      // CRITICAL: Re-fetch coach_pin_hash from Supabase right before writing
+      // This prevents race conditions where two devices try to set PIN simultaneously
+      const currentHash = await fetchCoachPinHash(user.id);
+
+      // Refuse if PIN already exists (even if local state shows setup)
+      if (currentHash) {
+        throw new Error('Coach PIN is already set for this account');
       }
-      const pinHash = await hashPin(pin);
-      await storage.setItem(COACH_PIN_HASH_KEY, pinHash);
+
+      // Hash the new PIN
+      const pinHash = await hashCoachPin(pin);
+      
+      // Update coach_pin_hash in profiles table with optimistic locking
+      // updateCoachPinHash verifies the write succeeded internally
+      await updateCoachPinHash(user.id, pinHash, null);
+
+      // Re-fetch to get the confirmed hash value
+      const verifiedHash = await fetchCoachPinHash(user.id);
+      if (!verifiedHash || verifiedHash !== pinHash) {
+        throw new Error('Failed to verify Coach PIN was set');
+      }
+
+      // Update local state only after successful server write
+      setCoachPinHash(verifiedHash);
       setHasCoachPin(true);
-      // Auto-unlock after setting PIN
-      await storage.setItem(COACH_MODE_UNLOCKED_KEY, 'true');
+      // Auto-unlock after setting PIN (session-only)
       setCoachModeUnlocked(true);
     } catch (error) {
+      // Fail locked: never unlock on errors
       console.error('Error setting Coach PIN:', error);
       throw error;
     }
   };
 
   const changeCoachPin = async (currentPin: string, newPin: string): Promise<boolean> => {
+    if (!user?.id) {
+      return false;
+    }
+
     try {
-      // Verify current PIN first
-      const isValid = await checkCoachPin(currentPin);
+      // CRITICAL: Fetch latest coach_pin_hash from Supabase before verification
+      // This ensures we verify against the most current hash, not stale local state
+      const latestHash = await fetchCoachPinHash(user.id);
+
+      if (!latestHash) {
+        console.error('No Coach PIN hash found');
+        return false;
+      }
+
+      // Verify current PIN against the latest hash from Supabase
+      const isValid = await verifyCoachPin(currentPin, latestHash);
       if (!isValid) {
         return false;
       }
       
-      // Set new PIN
-      if (newPin.length < 4 || newPin.length > 8) {
-        throw new Error('PIN must be between 4 and 8 digits');
+      // Hash the new PIN
+      const newPinHash = await hashCoachPin(newPin);
+      
+      // Update coach_pin_hash in profiles table with optimistic locking
+      // updateCoachPinHash verifies the write succeeded internally
+      await updateCoachPinHash(user.id, newPinHash, latestHash);
+
+      // Re-fetch to get the confirmed hash value
+      const verifiedHash = await fetchCoachPinHash(user.id);
+      if (!verifiedHash || verifiedHash !== newPinHash) {
+        console.error('Failed to verify Coach PIN was updated');
+        return false;
       }
-      const pinHash = await hashPin(newPin);
-      await storage.setItem(COACH_PIN_HASH_KEY, pinHash);
-      // Keep unlocked state
+
+      // Update local state only after successful server write
+      setCoachPinHash(verifiedHash);
+      // Keep unlocked state (session-only)
       return true;
     } catch (error) {
+      // Fail locked: never unlock on errors
       console.error('Error changing Coach PIN:', error);
       return false;
     }
@@ -208,12 +264,10 @@ export function CoachModeProvider({ children }: CoachModeProviderProps) {
 
   const checkCoachPin = async (pin: string): Promise<boolean> => {
     try {
-      const storedPinHash = await storage.getItem(COACH_PIN_HASH_KEY);
-      if (!storedPinHash) {
+      if (!coachPinHash) {
         return false;
       }
-      const pinHash = await hashPin(pin);
-      return storedPinHash === pinHash;
+      return await verifyCoachPin(pin, coachPinHash);
     } catch (error) {
       console.error('Error checking Coach PIN:', error);
       return false;
@@ -223,6 +277,8 @@ export function CoachModeProvider({ children }: CoachModeProviderProps) {
   const value: CoachModeContextType = {
     coachModeUnlocked,
     hasCoachPin,
+    loadingCoachPin,
+    coachPinHash,
     unlockCoachMode,
     lockCoachMode,
     setCoachPin,
