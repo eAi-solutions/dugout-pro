@@ -1,9 +1,53 @@
 // CoachModeProvider with React context for Coach Mode state and PIN management
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const COACH_PIN_HASH_KEY = 'coach_pin_hash';
 const COACH_MODE_UNLOCKED_KEY = 'coachModeUnlocked';
+
+// Platform-specific storage abstraction
+// Uses localStorage on web, AsyncStorage on native
+const storage = {
+  getItem: async (key: string): Promise<string | null> => {
+    if (Platform.OS === 'web') {
+      // Use localStorage on web
+      try {
+        return localStorage.getItem(key);
+      } catch (error) {
+        console.error('Error reading from localStorage:', error);
+        return null;
+      }
+    } else {
+      // Use AsyncStorage on native
+      try {
+        return await AsyncStorage.getItem(key);
+      } catch (error) {
+        console.error('Error reading from AsyncStorage:', error);
+        return null;
+      }
+    }
+  },
+  setItem: async (key: string, value: string): Promise<void> => {
+    if (Platform.OS === 'web') {
+      // Use localStorage on web
+      try {
+        localStorage.setItem(key, value);
+      } catch (error) {
+        console.error('Error writing to localStorage:', error);
+        throw error;
+      }
+    } else {
+      // Use AsyncStorage on native
+      try {
+        await AsyncStorage.setItem(key, value);
+      } catch (error) {
+        console.error('Error writing to AsyncStorage:', error);
+        throw error;
+      }
+    }
+  },
+};
 
 // Simple hash function for PIN (using a basic algorithm that works in React Native)
 // In production, consider using a proper crypto library
@@ -63,21 +107,21 @@ export function CoachModeProvider({ children }: CoachModeProviderProps) {
   const [hasCoachPin, setHasCoachPin] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Load initial state from AsyncStorage
+  // Load initial state from platform-specific storage
   // Coach Mode always starts locked on app launch (session-based security)
   useEffect(() => {
     const loadState = async () => {
       try {
         // Only load PIN hash to check if PIN exists
         // Always start locked regardless of stored state
-        const pinHash = await AsyncStorage.getItem(COACH_PIN_HASH_KEY);
+        const pinHash = await storage.getItem(COACH_PIN_HASH_KEY);
         
         // Force locked state on startup (ignore stored unlocked state)
         setCoachModeUnlocked(false);
         setHasCoachPin(!!pinHash);
         
         // Clear stored unlocked state to keep storage clean
-        await AsyncStorage.setItem(COACH_MODE_UNLOCKED_KEY, 'false');
+        await storage.setItem(COACH_MODE_UNLOCKED_KEY, 'false');
       } catch (error) {
         console.error('Error loading Coach Mode state:', error);
         // Ensure locked state even on error
@@ -90,16 +134,20 @@ export function CoachModeProvider({ children }: CoachModeProviderProps) {
     loadState();
   }, []);
 
+  // Note: CoachModeProvider is only mounted when user is authenticated
+  // When user logs out, this component unmounts, so no need to watch for user changes
+  // Coach Mode state is automatically reset on unmount and will be locked on next mount
+
   const unlockCoachMode = async (pin: string): Promise<boolean> => {
     try {
-      const storedPinHash = await AsyncStorage.getItem(COACH_PIN_HASH_KEY);
+      const storedPinHash = await storage.getItem(COACH_PIN_HASH_KEY);
       if (!storedPinHash) {
         return false; // No PIN set
       }
       
       const pinHash = await hashPin(pin);
       if (storedPinHash === pinHash) {
-        await AsyncStorage.setItem(COACH_MODE_UNLOCKED_KEY, 'true');
+        await storage.setItem(COACH_MODE_UNLOCKED_KEY, 'true');
         setCoachModeUnlocked(true);
         return true;
       }
@@ -112,7 +160,7 @@ export function CoachModeProvider({ children }: CoachModeProviderProps) {
 
   const lockCoachMode = async (): Promise<void> => {
     try {
-      await AsyncStorage.setItem(COACH_MODE_UNLOCKED_KEY, 'false');
+      await storage.setItem(COACH_MODE_UNLOCKED_KEY, 'false');
       setCoachModeUnlocked(false);
     } catch (error) {
       console.error('Error locking Coach Mode:', error);
@@ -125,10 +173,10 @@ export function CoachModeProvider({ children }: CoachModeProviderProps) {
         throw new Error('PIN must be between 4 and 8 digits');
       }
       const pinHash = await hashPin(pin);
-      await AsyncStorage.setItem(COACH_PIN_HASH_KEY, pinHash);
+      await storage.setItem(COACH_PIN_HASH_KEY, pinHash);
       setHasCoachPin(true);
       // Auto-unlock after setting PIN
-      await AsyncStorage.setItem(COACH_MODE_UNLOCKED_KEY, 'true');
+      await storage.setItem(COACH_MODE_UNLOCKED_KEY, 'true');
       setCoachModeUnlocked(true);
     } catch (error) {
       console.error('Error setting Coach PIN:', error);
@@ -149,7 +197,7 @@ export function CoachModeProvider({ children }: CoachModeProviderProps) {
         throw new Error('PIN must be between 4 and 8 digits');
       }
       const pinHash = await hashPin(newPin);
-      await AsyncStorage.setItem(COACH_PIN_HASH_KEY, pinHash);
+      await storage.setItem(COACH_PIN_HASH_KEY, pinHash);
       // Keep unlocked state
       return true;
     } catch (error) {
@@ -160,7 +208,7 @@ export function CoachModeProvider({ children }: CoachModeProviderProps) {
 
   const checkCoachPin = async (pin: string): Promise<boolean> => {
     try {
-      const storedPinHash = await AsyncStorage.getItem(COACH_PIN_HASH_KEY);
+      const storedPinHash = await storage.getItem(COACH_PIN_HASH_KEY);
       if (!storedPinHash) {
         return false;
       }

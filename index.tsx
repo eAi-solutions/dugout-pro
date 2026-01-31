@@ -4,7 +4,6 @@ import { View, Text } from 'react-native';
 
 import App from './App';
 import { AuthProvider } from './lib/AuthContext';
-import { CoachModeProvider } from './lib/CoachModeContext';
 
 // Error boundary to catch any initialization errors
 class ErrorBoundary extends React.Component<
@@ -54,14 +53,13 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-// Wrap App with AuthProvider and CoachModeProvider
+// Wrap App with AuthProvider
+// CoachModeProvider is conditionally mounted inside App.tsx when user is authenticated
 function AppWithAuth() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <CoachModeProvider>
-          <App />
-        </CoachModeProvider>
+        <App />
       </AuthProvider>
     </ErrorBoundary>
   );

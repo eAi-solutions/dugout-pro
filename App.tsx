@@ -16,6 +16,9 @@ import {
 } from 'react-native';
 import { baseballDrills, Drill, PracticePlan } from './Data/Models/baseballDrills';
 import BaseballField from './Field/BaseballField';
+import { useAuth } from './lib/AuthContext';
+import { CoachModeProvider } from './lib/CoachModeContext';
+import TeamLoginScreen from './components/TeamLoginScreen';
 
 // Security utility functions
 const sanitizeInput = (input: string, maxLength: number = 1000): string => {
@@ -40,35 +43,84 @@ const generateSecureId = (): string => {
 const isDevelopment = __DEV__ || process.env.NODE_ENV === 'development';
 
 export default function App() {
+  // Hooks must be called unconditionally - ALL hooks must be at the top before any returns
+  const { user, loading: authLoading, signOut } = useAuth();
+  const [showStuckLoading, setShowStuckLoading] = useState(false);
+  
+  // Safety guard: if loading exceeds 1.5 seconds, show reset option
+  useEffect(() => {
+    if (authLoading) {
+      const timer = setTimeout(() => {
+        setShowStuckLoading(true);
+      }, 1500);
+      return () => clearTimeout(timer);
+    } else {
+      setShowStuckLoading(false);
+    }
+  }, [authLoading]);
+  
   if (isDevelopment) {
-    console.log('App component rendering...');
+    console.log('App component rendering...', { authLoading, hasUser: !!user });
   }
   
-  // Wrap Dimensions in try-catch for web compatibility
-  let screenHeight = 800;
-  let screenWidth = 400;
-  try {
-    const dimensions = Dimensions.get('window');
-    screenHeight = dimensions.height || 800;
-    screenWidth = dimensions.width || 400;
-    if (isDevelopment) {
-      console.log('Dimensions:', { screenHeight, screenWidth });
+  // Show loading indicator while auth state is loading
+  if (authLoading) {
+    if (showStuckLoading) {
+      return (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff', padding: 20 }}>
+          <Text style={{ fontSize: 18, color: '#666', marginBottom: 20, textAlign: 'center' }}>
+            Still loading...
+          </Text>
+          <Text style={{ fontSize: 14, color: '#999', marginBottom: 30, textAlign: 'center' }}>
+            If this persists, try resetting
+          </Text>
+          <TouchableOpacity
+            style={{
+              backgroundColor: '#f44336',
+              padding: 15,
+              borderRadius: 8,
+              paddingHorizontal: 30,
+            }}
+            onPress={async () => {
+              try {
+                await signOut();
+              } catch (error) {
+                console.error('Sign out error:', error);
+              }
+            }}
+          >
+            <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>Reset & Sign Out</Text>
+          </TouchableOpacity>
+        </View>
+      );
     }
-  } catch (error) {
-    if (isDevelopment) {
-      console.warn('Dimensions API error:', error);
-    }
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
+        <Text style={{ fontSize: 16, color: '#666' }}>Loading...</Text>
+      </View>
+    );
   }
   
-  // More conservative safe area calculations
-  const isLargeScreen = screenHeight > 800;
-  const statusBarHeight = Platform.OS === 'android' 
-    ? (isLargeScreen ? 50 : 45)  // Larger screens often have bigger notches
-    : 50;
-  const bottomPadding = Platform.OS === 'android' 
-    ? (isLargeScreen ? 30 : 25)  // More padding for navigation buttons
-    : 40;
+  // Show login screen if user is not authenticated
+  if (!user) {
+    return <TeamLoginScreen />;
+  }
   
+  // User is authenticated - render main app wrapped in CoachModeProvider
+  // CoachModeProvider is only mounted when authenticated
+  return (
+    <CoachModeProvider>
+      <AuthenticatedApp />
+    </CoachModeProvider>
+  );
+}
+
+// Authenticated app component - only rendered when user is authenticated
+// Wrapped in CoachModeProvider by parent App component
+function AuthenticatedApp() {
+  const { signOut } = useAuth();
+  
+  // All state hooks must be declared before any conditional returns
   const [drills, setDrills] = useState<Drill[]>(baseballDrills);
   const [practicePlans, setPracticePlans] = useState<PracticePlan[]>([]);
   const [selectedDrills, setSelectedDrills] = useState<Set<string>>(new Set());
@@ -169,6 +221,31 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [showWelcome]);
+  
+  // Wrap Dimensions in try-catch for web compatibility
+  let screenHeight = 800;
+  let screenWidth = 400;
+  try {
+    const dimensions = Dimensions.get('window');
+    screenHeight = dimensions.height || 800;
+    screenWidth = dimensions.width || 400;
+    if (isDevelopment) {
+      console.log('Dimensions:', { screenHeight, screenWidth });
+    }
+  } catch (error) {
+    if (isDevelopment) {
+      console.warn('Dimensions API error:', error);
+    }
+  }
+  
+  // More conservative safe area calculations
+  const isLargeScreen = screenHeight > 800;
+  const statusBarHeight = Platform.OS === 'android' 
+    ? (isLargeScreen ? 50 : 45)  // Larger screens often have bigger notches
+    : 50;
+  const bottomPadding = Platform.OS === 'android' 
+    ? (isLargeScreen ? 30 : 25)  // More padding for navigation buttons
+    : 40;
 
   const handleSaveDrill = () => {
     // Input validation with length limits
@@ -922,6 +999,14 @@ export default function App() {
       {/* Footer */}
       <View style={styles.menuFooter}>
         <Text style={styles.menuFooterText}>by eAi-solutions</Text>
+        <TouchableOpacity
+          style={styles.signOutButton}
+          onPress={async () => {
+            await signOut();
+          }}
+        >
+          <Text style={styles.signOutText}>Sign Out</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -1352,17 +1437,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
   },
-  saveButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
-    backgroundColor: '#27ae60',
-  },
-  saveButtonText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
   cancelEditButton: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -1787,6 +1861,25 @@ const styles = StyleSheet.create({
   menuFooterText: {
     fontSize: 12,
     color: '#7f8c8d',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  signOutButton: {
+    marginTop: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    backgroundColor: '#e74c3c',
+    borderRadius: 8,
+    minWidth: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    // Web-safe: ensure button is clickable and visible
+    cursor: 'pointer',
+  },
+  signOutText: {
+    fontSize: 16,
+    color: '#ffffff',
+    fontWeight: '600',
     textAlign: 'center',
   },
   // Updated header styles for practice planning
