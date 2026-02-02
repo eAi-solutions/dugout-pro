@@ -17,8 +17,9 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   
   // Responsive layout breakpoint
-  const isCompact = windowWidth < 768;
-  const isWide = windowWidth >= 768;
+  // Force compact mode when viewport height is short (mobile rotation)
+  const isCompact = windowWidth < 768 || windowHeight < 600;
+  const isWide = windowWidth >= 768 && windowHeight >= 600;
   
   // Popup state for collapsing controls
   const [isPopupOpen, setIsPopupOpen] = useState(false);
@@ -220,7 +221,8 @@ const styles = StyleSheet.create({
     borderTopColor: '#ddd',
   },
   controlsScrollContent: {
-    padding: 20,
+    paddingTop: 80, // Account for header height (60px) + some margin
+    paddingHorizontal: 20,
     paddingBottom: 40,
   },
   controlsCollapsedBar: {
