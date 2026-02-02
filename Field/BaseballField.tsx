@@ -16,9 +16,39 @@ interface FieldDiagramProps {
 const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   
-  // Responsive layout breakpoint
-  const isCompact = windowWidth < 768;
-  const isWide = windowWidth >= 768;
+  // Responsive layout breakpoint: use lg (1024px) instead of md (768px)
+  // Additionally, require minimum height of 600px to prevent side-by-side on short screens (e.g., Android landscape)
+  // Only use side-by-side layout on truly large screens with sufficient height
+  const isWide = windowWidth >= 1024 && windowHeight >= 600;
+  const isCompact = !isWide;
+  
+  // ============================================================================
+  // RESPONSIVE LAYOUT SANITY CHECK
+  // ============================================================================
+  // Verify the field fits correctly in these viewports:
+  //
+  // 1. Android Chrome Portrait (~412x915 or similar)
+  //    - Field should be square and fit within available height
+  //    - Controls panel should scroll if needed
+  //    - Field should remain fully visible
+  //
+  // 2. Android Chrome Landscape (~915x412 or similar)
+  //    - Field should be square and fit within available height
+  //    - Layout should stay stacked (not side-by-side) due to height < 600px
+  //    - Controls panel should scroll independently
+  //
+  // 3. iPhone Safari Landscape (~844x390 or similar)
+  //    - Field should be square and fit within available height
+  //    - Layout should stay stacked (not side-by-side) due to height < 600px
+  //    - Controls panel should scroll independently
+  //
+  // Key assertions:
+  // - Field container does not overflow its parent
+  // - Field maintains square aspect ratio (aspectRatio: 1)
+  // - Field size = min(containerWidth, containerHeight) with 240px minimum
+  // - Only controls area scrolls, field stays fixed and visible
+  // - No page-level scrolling (overflow: hidden on bodyContainer)
+  // ============================================================================
   
   // Popup state for collapsing controls
   const [isPopupOpen, setIsPopupOpen] = useState(false);
@@ -46,11 +76,14 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
     ? (isLargeScreen ? 30 : 25)
     : 40;
   
-  // Calculate fixed field height for compact mode
-  // Clamp between 320 and 520, using 55% of window height as base
-  const fieldHeight = isCompact 
-    ? Math.max(320, Math.min(520, Math.floor(windowHeight * 0.55)))
-    : undefined;
+  // Measure header height dynamically
+  const [headerHeight, setHeaderHeight] = useState<number>(50); // Default fallback
+  
+  // Calculate body container height: calc(100dvh - headerHeight - padding)
+  // Account for container padding (statusBarHeight on mobile, bottomPadding)
+  const containerPaddingTop = Platform.OS === 'web' ? 0 : statusBarHeight;
+  const containerPaddingBottom = Platform.OS === 'web' ? 0 : bottomPadding;
+  const bodyContainerHeight = windowHeight - headerHeight - containerPaddingTop - containerPaddingBottom;
   
   const resetPositions = () => {
     // This function is called by InteractiveField when reset is needed
@@ -76,8 +109,23 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
 
 
   return (
-    <View style={[styles.container, { paddingTop: Platform.OS === 'web' ? 0 : statusBarHeight, paddingBottom: Platform.OS === 'web' ? 0 : bottomPadding }]}>
-      <View style={styles.header}>
+    <View style={[
+      styles.container, 
+      { 
+        paddingTop: Platform.OS === 'web' ? 0 : statusBarHeight, 
+        paddingBottom: Platform.OS === 'web' ? 0 : bottomPadding,
+        // Use dynamic viewport height (100dvh equivalent) on web
+        ...(Platform.OS === 'web' ? { height: windowHeight } : {}),
+        overflow: 'hidden', // Prevent clipping/scrollbars
+      }
+    ]}>
+      <View 
+        style={styles.header}
+        onLayout={(e) => {
+          const { height } = e.nativeEvent.layout;
+          setHeaderHeight(height);
+        }}
+      >
         <TouchableOpacity style={styles.backButton} onPress={onBack}>
           <Text style={styles.backButtonText}>← Menu</Text>
         </TouchableOpacity>
@@ -86,11 +134,23 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
       </View>
 
       {isCompact ? (
-        <View style={styles.bodyContainer}>
+        <View style={[
+          styles.bodyContainer, 
+          { 
+            height: bodyContainerHeight, // Fixed height: calc(100dvh - headerHeight)
+            overflow: 'hidden', // Prevent page-level scrolling
+          }
+        ]}>
           {/* Header (fixed) - already rendered above */}
           
-          {/* FieldCanvas container (fixed height; no vertical scrolling) */}
-          <View style={[styles.fieldCanvasContainer, { height: fieldHeight }]}>
+          {/* FieldCanvas container - field computes square size from container dimensions */}
+          {/* 
+            RESPONSIVE LAYOUT: Field stays visible and doesn't scroll
+            - Field size = min(containerWidth, containerHeight) with 240px minimum
+            - Field maintains square aspect ratio (aspectRatio: 1)
+            - Verify field fits in: Android Chrome portrait/landscape, iPhone Safari landscape (844x390)
+          */}
+          <View style={styles.fieldCanvasContainer}>
             <InteractiveField 
               onReset={resetPositions} 
               layoutMode="compact"
@@ -117,12 +177,13 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
             </View>
           )}
           
-          {/* Controls ScrollView (this is the ONLY vertical scroll region) */}
+          {/* Controls ScrollView - ONLY this area scrolls when vertical space is tight */}
           {!isPopupOpen && controlsProps ? (
             <ScrollView 
               style={styles.controlsScrollView}
               contentContainerStyle={styles.controlsScrollContent}
               showsVerticalScrollIndicator={true}
+              nestedScrollEnabled={true}
             >
               <FieldControls {...controlsProps} collapsed={false} />
             </ScrollView>
@@ -193,7 +254,8 @@ const styles = StyleSheet.create({
     width: 60, // Same width as back button for balance
   },
   bodyContainer: {
-    flex: 1,
+    flex: 1, // Default to flex, but can be overridden with fixed height
+    flexDirection: 'column', // Ensure vertical stacking
   },
   bodyContainerCompact: {
     padding: 20,
@@ -205,13 +267,15 @@ const styles = StyleSheet.create({
   },
   fieldCanvasContainer: {
     width: '100%',
+    flex: 1, // Fill available container space
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 10,
+    minHeight: 240, // Minimum height to ensure field can render
     flexShrink: 0, // Prevent field from shrinking
-    // Height is set dynamically via inline style in compact mode
-    // In compact mode: fixed height (clamped between 320-520px based on window height)
-    // This ensures the field stays fixed and doesn't scroll
+    overflow: 'hidden', // Prevent clipping/scrollbars
+    // Field will compute square size = min(containerWidth, containerHeight) with 240px minimum
+    // This ensures the field always fits inside available space, including rotation
   },
   controlsScrollView: {
     flex: 1, // Takes remaining space after field and playback dock
