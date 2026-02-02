@@ -187,11 +187,14 @@ function FieldCanvas({
       accessibilityLabel="Baseball field interactive diagram"
       style={{ 
         width: '100%',
-        maxWidth: layoutMode === 'wide' ? 800 : 900,
-        aspectRatio: 1,
+        maxWidth: '100%',
+        minWidth: 240,
+        minHeight: 240,
+        aspectRatio: 1, // Maintain square shape - height will be computed from width
         alignSelf: 'center', 
         marginVertical: layoutMode === 'wide' ? 0 : 20, 
         position: 'relative',
+        overflow: 'hidden', // Prevent clipping/scrollbars
       }}
       onLayout={handleLayout}
       {...(Platform.OS === 'web' ? webEventHandlers : {})}
@@ -557,6 +560,32 @@ export default function InteractiveField({ onReset, layoutMode = 'compact', onPo
         y: fieldSize * BALL_BASE_POS.yPercent 
       });
     }
+  }, [fieldSize]);
+
+  // Use ResizeObserver on web to update field size on rotation/resizes
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !containerDOMRef.current) {
+      return;
+    }
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          // Compute square size = min(containerWidth, containerHeight) with 240px minimum
+          const squareSize = Math.max(240, Math.min(width, height));
+          if (squareSize !== fieldSize) {
+            setFieldSize(squareSize);
+          }
+        }
+      }
+    });
+
+    resizeObserver.observe(containerDOMRef.current);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
   }, [fieldSize]);
 
   const resetPositions = useCallback(() => {
@@ -1179,9 +1208,19 @@ export default function InteractiveField({ onReset, layoutMode = 'compact', onPo
     const { x, y, width, height } = e.nativeEvent.layout;
     setContainerLayout({ x, y, width, height });
     
-    // Set fieldSize to actual rendered width - this is the single source of truth
-    if (width > 0 && width !== fieldSize) {
-      setFieldSize(width);
+    // Compute square size = min(containerWidth, containerHeight) with 240px minimum
+    // This ensures the field always fits inside available space, including rotation
+    // 
+    // RESPONSIVE LAYOUT SANITY CHECK:
+    // - Field size should never exceed min(containerWidth, containerHeight)
+    // - Minimum size of 240px prevents field from collapsing
+    // - Square aspect ratio (aspectRatio: 1) ensures field fits in both portrait and landscape
+    // - Verify in: Android Chrome portrait/landscape, iPhone Safari landscape (844x390)
+    const squareSize = Math.max(240, Math.min(width, height));
+    
+    // Set fieldSize to computed square size - this is the single source of truth
+    if (squareSize > 0 && squareSize !== fieldSize) {
+      setFieldSize(squareSize);
     }
     
     // Also measure in window for accurate cross-browser coordinates
@@ -1228,9 +1267,9 @@ export default function InteractiveField({ onReset, layoutMode = 'compact', onPo
 
   if (layoutMode === 'wide') {
     return (
-      <View style={{ flex: 1, flexDirection: 'row', width: '100%' }}>
+      <View style={{ flex: 1, flexDirection: 'row', width: '100%', overflow: 'hidden' }}>
         {/* Left: FieldCanvas */}
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20, overflow: 'hidden' }}>
           <FieldCanvas
             fieldSize={fieldSize}
             playerPositions={playerPositions}
