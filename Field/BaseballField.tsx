@@ -167,6 +167,21 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
     ? viewportHeight - headerHeight 
     : viewportHeight - headerHeight - containerPaddingTop - containerPaddingBottom;
   
+  // Check if header is fixed/sticky on web (for conditional padding)
+  // Since header is in normal flow, we still add paddingTop to ensure content starts below header
+  // This handles edge cases where the header might overlap content on rotation
+  // On web, add small safety offset (6px) to handle rounding/dynamic viewport issues on Android Chrome
+  const scrollContentPaddingTop = Platform.OS === 'web' ? headerHeight + 6 : headerHeight;
+  
+  // Debug mode: check URL params for ?debug=1
+  const [showDebugOverlay, setShowDebugOverlay] = useState(false);
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      setShowDebugOverlay(urlParams.get('debug') === '1');
+    }
+  }, []);
+  
   const resetPositions = () => {
     // This function is called by InteractiveField when reset is needed
     // The actual reset logic is handled in InteractiveField component
@@ -222,7 +237,10 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
               ? { height: viewportHeight - headerHeight } 
               : { height: bodyContainerHeight }
           ]}
-          contentContainerStyle={styles.bodyContainerContent}
+          contentContainerStyle={[
+            styles.bodyContainerContent,
+            { paddingTop: scrollContentPaddingTop }
+          ]}
           showsVerticalScrollIndicator={true}
         >
           {/* FieldCanvas container - field computes square size from container dimensions */}
@@ -284,7 +302,10 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
               ? { height: viewportHeight - headerHeight } 
               : { height: bodyContainerHeight }
           ]}
-          contentContainerStyle={styles.bodyContainerContentWide}
+          contentContainerStyle={[
+            styles.bodyContainerContentWide,
+            { paddingTop: scrollContentPaddingTop }
+          ]}
           showsVerticalScrollIndicator={true}
         >
           <InteractiveField 
@@ -312,6 +333,16 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
             }}
           />
         </ScrollView>
+      )}
+      
+      {/* Debug overlay - only shown when ?debug=1 in URL */}
+      {showDebugOverlay && Platform.OS === 'web' && (
+        <View style={styles.debugOverlay}>
+          <Text style={styles.debugText}>headerHeight: {headerHeight.toFixed(0)}px</Text>
+          <Text style={styles.debugText}>viewportHeight: {viewportHeight.toFixed(0)}px</Text>
+          <Text style={styles.debugText}>bodyHeight: {bodyContainerHeight.toFixed(0)}px</Text>
+          <Text style={styles.debugText}>contentPaddingTop: {scrollContentPaddingTop.toFixed(0)}px</Text>
+        </View>
       )}
     </View>
   );
@@ -427,6 +458,22 @@ const styles = StyleSheet.create({
   },
   fieldContainerCompact: {
     maxWidth: '100%',
+  },
+  debugOverlay: {
+    position: 'absolute',
+    top: 60,
+    right: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    padding: 10,
+    borderRadius: 5,
+    zIndex: 9999,
+    minWidth: 200,
+  },
+  debugText: {
+    color: '#fff',
+    fontSize: 12,
+    fontFamily: Platform.OS === 'web' ? 'monospace' : 'monospace',
+    marginVertical: 2,
   },
 });
 
