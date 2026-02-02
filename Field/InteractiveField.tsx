@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback, ReactElement } from 'react';
-import { View, Text, PanResponder, Animated, TouchableOpacity, Platform, LayoutChangeEvent, Alert, TextInput, ScrollView } from 'react-native';
+import { View, Text, PanResponder, Animated, TouchableOpacity, Platform, LayoutChangeEvent, Alert, TextInput } from 'react-native';
 import BaseballFieldImage from './BaseballFieldImage';
 import ScenarioRecorder from './ScenarioRecorder';
 import ScenarioLibrary from './ScenarioLibrary';
@@ -184,42 +184,56 @@ function FieldCanvas({
     <View 
       ref={setContainerRef}
       accessible={true}
-      accessibilityLabel="Baseball field interactive diagram"
+      accessibilityLabel="Baseball field measurement container"
       style={{ 
         width: '100%',
-        maxWidth: '100%',
-        minWidth: 240,
-        minHeight: 240,
-        aspectRatio: 1, // Maintain square shape - height will be computed from width
-        alignSelf: 'center', 
-        marginVertical: layoutMode === 'wide' ? 0 : 20, 
+        minHeight: 240, // Ensure minimum height for measurement
+        // Height will be determined by container constraints (including maxHeight: 60dvh on short viewports)
+        // onLayout/ResizeObserver will measure the actual rendered dimensions, which naturally respect maxHeight
+        alignItems: 'center',
+        justifyContent: 'center',
         position: 'relative',
-        overflow: 'hidden', // Prevent clipping/scrollbars
       }}
       onLayout={handleLayout}
       {...(Platform.OS === 'web' ? webEventHandlers : {})}
     >
-      {/* Image-based Baseball Field Background */}
-      <BaseballFieldImage />
-      
-      {/* Overlay Players, Ball, and Runners on top of field - only render when fieldSize is set */}
+      {/* Field visual wrapper with explicit dimensions based on measured container size */}
       {fieldSize > 0 && (
-        <View style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          pointerEvents: 'box-none'
-        }}>
-          {/* Players */}
-          {playerPositions.map(renderPlayer)}
+        <View
+          accessible={true}
+          accessibilityLabel="Baseball field interactive diagram"
+          style={{
+            width: fieldSize,
+            height: fieldSize,
+            minWidth: 240,
+            minHeight: 240,
+            alignSelf: 'center',
+            marginVertical: layoutMode === 'wide' ? 0 : 20,
+            position: 'relative',
+            overflow: 'hidden', // Prevent clipping/scrollbars - only field visual wrapper has overflow-hidden
+          }}
+        >
+          {/* Image-based Baseball Field Background */}
+          <BaseballFieldImage />
+          
+          {/* Overlay Players, Ball, and Runners on top of field */}
+          <View style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            pointerEvents: 'box-none'
+          }}>
+            {/* Players */}
+            {playerPositions.map(renderPlayer)}
 
-          {/* Baseball */}
-          {renderBall()}
+            {/* Baseball */}
+            {renderBall()}
 
-          {/* Runners */}
-          {runners.map(renderRunner)}
+            {/* Runners */}
+            {runners.map(renderRunner)}
+          </View>
         </View>
       )}
     </View>
@@ -528,6 +542,9 @@ export default function InteractiveField({ onReset, layoutMode = 'compact', onPo
   const [fieldSize, setFieldSize] = useState(0);
   const fieldWidth = fieldSize;
   const fieldHeight = fieldSize;
+  
+  // Track container readiness for ResizeObserver setup (web only)
+  const [containerReady, setContainerReady] = useState(false);
 
   // Store positions in pixels (converted from normalized percentages)
   const [playerPositions, setPlayerPositions] = useState<PlayerPosition[]>([]);
@@ -562,31 +579,106 @@ export default function InteractiveField({ onReset, layoutMode = 'compact', onPo
     }
   }, [fieldSize]);
 
-  // Use ResizeObserver on web to update field size on rotation/resizes
-  useEffect(() => {
+  // Shared measurement function - used by ResizeObserver and event listeners
+  // Measures container dimensions and updates field size
+  const measureAndUpdateSize = useCallback(() => {
     if (Platform.OS !== 'web' || !containerDOMRef.current) {
       return;
     }
 
-    const resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width > 0 && height > 0) {
-          // Compute square size = min(containerWidth, containerHeight) with 240px minimum
-          const squareSize = Math.max(240, Math.min(width, height));
-          if (squareSize !== fieldSize) {
-            setFieldSize(squareSize);
-          }
+    const element = containerDOMRef.current;
+    if (!element) {
+      return;
+    }
+
+    // Use getBoundingClientRect for accurate dimensions that respect constraints
+    const rect = element.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
+
+    if (width > 0 && height > 0) {
+      // Compute square size = min(containerWidth, containerHeight) with 240px minimum
+      // This naturally respects maxHeight constraints (e.g., 60dvh on short viewports)
+      // because the container's rendered height will be constrained by maxHeight
+      const squareSize = Math.max(240, Math.min(width, height));
+      setFieldSize(prevSize => {
+        if (squareSize !== prevSize) {
+          return squareSize;
         }
-      }
+        return prevSize;
+      });
+    }
+  }, []);
+
+  // Coalesce measurement updates with requestAnimationFrame to avoid thrashing
+  const rafRef = useRef<number | null>(null);
+  const scheduleMeasurement = useCallback(() => {
+    if (rafRef.current !== null) {
+      return; // Already scheduled
+    }
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      measureAndUpdateSize();
+    });
+  }, [measureAndUpdateSize]);
+
+  // Use ResizeObserver on web to measure container and update field size on rotation/resizes
+  // The container is the measurement wrapper that fills the fieldCanvasContainer
+  // This measures the actual rendered dimensions, which naturally respect maxHeight constraints
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !containerReady) {
+      return;
+    }
+
+    const element = containerDOMRef.current;
+    if (!element) {
+      return;
+    }
+
+    const resizeObserver = new ResizeObserver(() => {
+      scheduleMeasurement();
     });
 
-    resizeObserver.observe(containerDOMRef.current);
+    resizeObserver.observe(element);
+
+    // Listen to visualViewport changes (address bar hide/show, zoom, etc.)
+    const visualViewport = typeof window !== 'undefined' ? window.visualViewport : null;
+    const handleVisualViewportResize = () => scheduleMeasurement();
+    const handleVisualViewportScroll = () => scheduleMeasurement();
+    
+    // Listen to orientation changes
+    const handleOrientationChange = () => {
+      // Small delay to ensure layout has updated after orientation change
+      setTimeout(() => scheduleMeasurement(), 100);
+    };
+    
+    // Listen to window resize (fallback for browsers without visualViewport)
+    const handleWindowResize = () => scheduleMeasurement();
+
+    if (visualViewport) {
+      visualViewport.addEventListener('resize', handleVisualViewportResize);
+      visualViewport.addEventListener('scroll', handleVisualViewportScroll);
+    }
+    window.addEventListener('orientationchange', handleOrientationChange);
+    window.addEventListener('resize', handleWindowResize);
+
+    // Initial measurement
+    scheduleMeasurement();
 
     return () => {
       resizeObserver.disconnect();
+      if (visualViewport) {
+        visualViewport.removeEventListener('resize', handleVisualViewportResize);
+        visualViewport.removeEventListener('scroll', handleVisualViewportScroll);
+      }
+      window.removeEventListener('orientationchange', handleOrientationChange);
+      window.removeEventListener('resize', handleWindowResize);
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
     };
-  }, [fieldSize]);
+  }, [containerReady, scheduleMeasurement]); // Re-run when container is ready
 
   const resetPositions = useCallback(() => {
     if (fieldSize > 0) {
@@ -805,16 +897,21 @@ export default function InteractiveField({ onReset, layoutMode = 'compact', onPo
         
         if (nodeAny._nativeNode && isHTMLElement(nodeAny._nativeNode)) {
           containerDOMRef.current = nodeAny._nativeNode;
+          setContainerReady(true);
         } else if (nodeAny._internalFiberInstanceHandleDEV?.stateNode && isHTMLElement(nodeAny._internalFiberInstanceHandleDEV.stateNode)) {
           containerDOMRef.current = nodeAny._internalFiberInstanceHandleDEV.stateNode;
+          setContainerReady(true);
         } else if (nodeAny.nodeType === 1 && isHTMLElement(node)) {
           containerDOMRef.current = node as unknown as HTMLElement;
+          setContainerReady(true);
         }
       } catch (error) {
         if (__DEV__) {
           console.warn('Error accessing DOM node:', error);
         }
       }
+    } else if (!node) {
+      setContainerReady(false);
     }
   }, []);
 
@@ -1210,18 +1307,22 @@ export default function InteractiveField({ onReset, layoutMode = 'compact', onPo
     
     // Compute square size = min(containerWidth, containerHeight) with 240px minimum
     // This ensures the field always fits inside available space, including rotation
+    // This naturally respects maxHeight constraints (e.g., 60dvh on short viewports)
     // 
     // RESPONSIVE LAYOUT SANITY CHECK:
     // - Field size should never exceed min(containerWidth, containerHeight)
     // - Minimum size of 240px prevents field from collapsing
-    // - Square aspect ratio (aspectRatio: 1) ensures field fits in both portrait and landscape
+    // - Explicit width/height (not aspectRatio) ensures field respects container constraints
     // - Verify in: Android Chrome portrait/landscape, iPhone Safari landscape (844x390)
     const squareSize = Math.max(240, Math.min(width, height));
     
     // Set fieldSize to computed square size - this is the single source of truth
-    if (squareSize > 0 && squareSize !== fieldSize) {
-      setFieldSize(squareSize);
-    }
+    setFieldSize(prevSize => {
+      if (squareSize > 0 && squareSize !== prevSize) {
+        return squareSize;
+      }
+      return prevSize;
+    });
     
     // Also measure in window for accurate cross-browser coordinates
     if (fieldContainerRef.current) {
@@ -1229,7 +1330,7 @@ export default function InteractiveField({ onReset, layoutMode = 'compact', onPo
         setContainerWindowLayout({ x: winX, y: winY, width: winWidth, height: winHeight });
       });
     }
-  }, [fieldSize]);
+  }, []); // Empty deps - function is stable, uses state setters
 
   const webEventHandlers = useMemo(() => {
     if (Platform.OS !== 'web') return {};
@@ -1267,9 +1368,9 @@ export default function InteractiveField({ onReset, layoutMode = 'compact', onPo
 
   if (layoutMode === 'wide') {
     return (
-      <View style={{ flex: 1, flexDirection: 'row', width: '100%', overflow: 'hidden' }}>
+      <View style={{ flex: 1, flexDirection: 'row', width: '100%' }}>
         {/* Left: FieldCanvas */}
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20, overflow: 'hidden' }}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20, minHeight: 0 }}>
           <FieldCanvas
             fieldSize={fieldSize}
             playerPositions={playerPositions}
@@ -1286,16 +1387,13 @@ export default function InteractiveField({ onReset, layoutMode = 'compact', onPo
         </View>
         
         {/* Right: Playback Dock (if playing) and FieldControls in fixed-width panel (360-420px) */}
-        <View style={{ width: 390, minWidth: 360, maxWidth: 420, backgroundColor: '#f5f5f5', borderLeftWidth: 1, borderLeftColor: '#ddd', flexDirection: 'column' }}>
+        {/* No nested ScrollView - main body ScrollView handles all scrolling */}
+        <View style={{ width: 390, minWidth: 360, maxWidth: 420, backgroundColor: '#f5f5f5', borderLeftWidth: 1, borderLeftColor: '#ddd', flexDirection: 'column', minHeight: 0 }}>
           {/* Playback Dock at top of right panel */}
           {renderPlaybackDock && renderPlaybackDock()}
           
-          {/* FieldControls below Playback Dock */}
-          <ScrollView 
-            style={{ flex: 1 }}
-            contentContainerStyle={{ padding: 20 }}
-            showsVerticalScrollIndicator={true}
-          >
+          {/* FieldControls below Playback Dock - flows naturally in main scroll container */}
+          <View style={{ padding: 20 }}>
             <FieldControls
               fieldSize={fieldSize}
               showRecorder={showRecorder}
@@ -1318,7 +1416,7 @@ export default function InteractiveField({ onReset, layoutMode = 'compact', onPo
               handleSelectScenario={handleSelectScenario}
               setShowRecorder={setShowRecorder}
             />
-          </ScrollView>
+          </View>
         </View>
       </View>
     );

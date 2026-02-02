@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, StyleSheet, Dimensions, TouchableOpacity, Text, ScrollView, Platform, useWindowDimensions } from 'react-native';
 import InteractiveField, { FieldControls } from './InteractiveField';
 import ScenarioPlayer from './ScenarioPlayer';
@@ -16,10 +16,87 @@ interface FieldDiagramProps {
 const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   
+  // Use visualViewport on web for accurate viewport dimensions (accounts for address bar, etc.)
+  const [effectiveViewportHeight, setEffectiveViewportHeight] = useState(windowHeight);
+  const [effectiveViewportWidth, setEffectiveViewportWidth] = useState(windowWidth);
+  
+  // Update effective viewport dimensions on web using visualViewport API
+  useEffect(() => {
+    if (Platform.OS !== 'web') {
+      return;
+    }
+
+    const updateViewport = () => {
+      const visualViewport = typeof window !== 'undefined' ? window.visualViewport : null;
+      if (visualViewport) {
+        setEffectiveViewportHeight(visualViewport.height);
+        setEffectiveViewportWidth(visualViewport.width);
+      } else {
+        // Fallback to window dimensions
+        setEffectiveViewportHeight(window.innerHeight);
+        setEffectiveViewportWidth(window.innerWidth);
+      }
+    };
+
+    const visualViewport = typeof window !== 'undefined' ? window.visualViewport : null;
+    const rafRef = { current: null as number | null };
+    
+    const scheduleUpdate = () => {
+      if (rafRef.current !== null) {
+        return;
+      }
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        updateViewport();
+      });
+    };
+
+    // Listen to visualViewport changes
+    if (visualViewport) {
+      visualViewport.addEventListener('resize', scheduleUpdate);
+      visualViewport.addEventListener('scroll', scheduleUpdate);
+    }
+    
+    // Listen to orientation changes
+    const handleOrientationChange = () => {
+      // Small delay to ensure layout has updated after orientation change
+      setTimeout(() => scheduleUpdate(), 100);
+    };
+    
+    // Listen to window resize (fallback)
+    window.addEventListener('resize', scheduleUpdate);
+    window.addEventListener('orientationchange', handleOrientationChange);
+
+    // Initial update
+    updateViewport();
+
+    return () => {
+      if (visualViewport) {
+        visualViewport.removeEventListener('resize', scheduleUpdate);
+        visualViewport.removeEventListener('scroll', scheduleUpdate);
+      }
+      window.removeEventListener('resize', scheduleUpdate);
+      window.removeEventListener('orientationchange', handleOrientationChange);
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+      }
+    };
+  }, []);
+
+  // Use effective viewport dimensions for calculations
+  const viewportHeight = Platform.OS === 'web' ? effectiveViewportHeight : windowHeight;
+  const viewportWidth = Platform.OS === 'web' ? effectiveViewportWidth : windowWidth;
+  
+  // Detect short viewport (typically mobile landscape) for field size constraint
+  // Apply maxHeight constraint on web when viewport height is < 500-600px
+  // Use effective viewport height to account for address bar hide/show
+  const isShortViewport = Platform.OS === 'web' && viewportHeight < 600;
+  
   // Responsive layout breakpoint: use lg (1024px) instead of md (768px)
   // Additionally, require minimum height of 600px to prevent side-by-side on short screens (e.g., Android landscape)
   // Only use side-by-side layout on truly large screens with sufficient height
-  const isWide = windowWidth >= 1024 && windowHeight >= 600;
+  // IMPORTANT: If isShortViewport is true, force compact/stacked layout regardless of width
+  const isWide = !isShortViewport && viewportWidth >= 1024 && viewportHeight >= 600;
   const isCompact = !isWide;
   
   // ============================================================================
@@ -34,20 +111,22 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
   //
   // 2. Android Chrome Landscape (~915x412 or similar)
   //    - Field should be square and fit within available height
-  //    - Layout should stay stacked (not side-by-side) due to height < 600px
-  //    - Controls panel should scroll independently
+  //    - Layout MUST stay stacked (not side-by-side) due to isShortViewport forcing compact mode
+  //    - Main ScrollView handles all scrolling (no nested scroll containers)
+  //    - Behaves identically to portrait, just shorter
   //
   // 3. iPhone Safari Landscape (~844x390 or similar)
   //    - Field should be square and fit within available height
-  //    - Layout should stay stacked (not side-by-side) due to height < 600px
-  //    - Controls panel should scroll independently
+  //    - Layout MUST stay stacked (not side-by-side) due to isShortViewport forcing compact mode
+  //    - Main ScrollView handles all scrolling (no nested scroll containers)
+  //    - Behaves identically to portrait, just shorter
   //
   // Key assertions:
   // - Field container does not overflow its parent
   // - Field maintains square aspect ratio (aspectRatio: 1)
   // - Field size = min(containerWidth, containerHeight) with 240px minimum
-  // - Only controls area scrolls, field stays fixed and visible
-  // - No page-level scrolling (overflow: hidden on bodyContainer)
+  // - Main content area scrolls (bodyContainer is ScrollView with height: calc(100dvh - headerHeight))
+  // - Only field visual wrapper has overflow: hidden to prevent bleed
   // ============================================================================
   
   // Popup state for collapsing controls
@@ -68,7 +147,7 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
   } | null>(null);
   
   // Safe area calculations
-  const isLargeScreen = windowHeight > 800;
+  const isLargeScreen = viewportHeight > 800;
   const statusBarHeight = Platform.OS === 'android' 
     ? (isLargeScreen ? 50 : 45)
     : 50;
@@ -81,9 +160,12 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
   
   // Calculate body container height: calc(100dvh - headerHeight - padding)
   // Account for container padding (statusBarHeight on mobile, bottomPadding)
+  // On web, use effective viewport height (from visualViewport) for accurate rotation handling
   const containerPaddingTop = Platform.OS === 'web' ? 0 : statusBarHeight;
   const containerPaddingBottom = Platform.OS === 'web' ? 0 : bottomPadding;
-  const bodyContainerHeight = windowHeight - headerHeight - containerPaddingTop - containerPaddingBottom;
+  const bodyContainerHeight = Platform.OS === 'web' 
+    ? viewportHeight - headerHeight 
+    : viewportHeight - headerHeight - containerPaddingTop - containerPaddingBottom;
   
   const resetPositions = () => {
     // This function is called by InteractiveField when reset is needed
@@ -114,9 +196,8 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
       { 
         paddingTop: Platform.OS === 'web' ? 0 : statusBarHeight, 
         paddingBottom: Platform.OS === 'web' ? 0 : bottomPadding,
-        // Use dynamic viewport height (100dvh equivalent) on web
-        ...(Platform.OS === 'web' ? { height: windowHeight } : {}),
-        overflow: 'hidden', // Prevent clipping/scrollbars
+        // Use effective viewport height (from visualViewport) on web for accurate rotation handling
+        ...(Platform.OS === 'web' ? { height: viewportHeight } : {}),
       }
     ]}>
       <View 
@@ -134,23 +215,29 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
       </View>
 
       {isCompact ? (
-        <View style={[
-          styles.bodyContainer, 
-          { 
-            height: bodyContainerHeight, // Fixed height: calc(100dvh - headerHeight)
-            overflow: 'hidden', // Prevent page-level scrolling
-          }
-        ]}>
-          {/* Header (fixed) - already rendered above */}
-          
+        <ScrollView 
+          style={[
+            styles.bodyContainer, 
+            Platform.OS === 'web' 
+              ? { height: viewportHeight - headerHeight } 
+              : { height: bodyContainerHeight }
+          ]}
+          contentContainerStyle={styles.bodyContainerContent}
+          showsVerticalScrollIndicator={true}
+        >
           {/* FieldCanvas container - field computes square size from container dimensions */}
           {/* 
             RESPONSIVE LAYOUT: Field stays visible and doesn't scroll
             - Field size = min(containerWidth, containerHeight) with 240px minimum
             - Field maintains square aspect ratio (aspectRatio: 1)
+            - Short viewport constraint: maxHeight: 60dvh when viewport height < 600px (mobile landscape)
+              This ensures controls remain reachable without field dominating the screen
             - Verify field fits in: Android Chrome portrait/landscape, iPhone Safari landscape (844x390)
           */}
-          <View style={styles.fieldCanvasContainer}>
+          <View style={[
+            styles.fieldCanvasContainer,
+            isShortViewport && styles.fieldCanvasContainerShort
+          ]}>
             <InteractiveField 
               onReset={resetPositions} 
               layoutMode="compact"
@@ -177,24 +264,29 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
             </View>
           )}
           
-          {/* Controls ScrollView - ONLY this area scrolls when vertical space is tight */}
+          {/* Controls - part of main scrollable content */}
           {!isPopupOpen && controlsProps ? (
-            <ScrollView 
-              style={styles.controlsScrollView}
-              contentContainerStyle={styles.controlsScrollContent}
-              showsVerticalScrollIndicator={true}
-              nestedScrollEnabled={true}
-            >
+            <View style={styles.controlsContainer}>
               <FieldControls {...controlsProps} collapsed={false} />
-            </ScrollView>
+            </View>
           ) : isPopupOpen ? (
             <View style={styles.controlsCollapsedBar}>
               <Text style={styles.controlsCollapsedText}>Controls</Text>
             </View>
           ) : null}
-        </View>
+        </ScrollView>
       ) : (
-        <View style={[styles.bodyContainer, styles.bodyContainerWide]}>
+        <ScrollView 
+          style={[
+            styles.bodyContainer, 
+            styles.bodyContainerWide,
+            Platform.OS === 'web' 
+              ? { height: viewportHeight - headerHeight } 
+              : { height: bodyContainerHeight }
+          ]}
+          contentContainerStyle={styles.bodyContainerContentWide}
+          showsVerticalScrollIndicator={true}
+        >
           <InteractiveField 
             onReset={resetPositions} 
             layoutMode="wide"
@@ -219,7 +311,7 @@ const BaseballField: React.FC<FieldDiagramProps> = ({ onBack }) => {
               return null;
             }}
           />
-        </View>
+        </ScrollView>
       )}
     </View>
   );
@@ -254,36 +346,45 @@ const styles = StyleSheet.create({
     width: 60, // Same width as back button for balance
   },
   bodyContainer: {
-    flex: 1, // Default to flex, but can be overridden with fixed height
+    // ScrollView container - height set dynamically via inline style
     flexDirection: 'column', // Ensure vertical stacking
   },
-  bodyContainerCompact: {
-    padding: 20,
-    paddingBottom: 40,
-    alignItems: 'center',
+  bodyContainerContent: {
+    // Content container for compact layout ScrollView
+    // flexGrow: 1 allows content to exceed viewport and enables scrolling
+    flexGrow: 1,
+    paddingBottom: 20,
   },
   bodyContainerWide: {
     // Wide layout: side-by-side layout handled by InteractiveField
   },
+  bodyContainerContentWide: {
+    // Content container for wide layout ScrollView
+    // flexGrow: 1 allows content to exceed viewport and enables scrolling
+    flexGrow: 1,
+  },
   fieldCanvasContainer: {
     width: '100%',
-    flex: 1, // Fill available container space
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 10,
+    paddingVertical: 20,
     minHeight: 240, // Minimum height to ensure field can render
     flexShrink: 0, // Prevent field from shrinking
-    overflow: 'hidden', // Prevent clipping/scrollbars
+    overflow: 'hidden', // Only field visual wrapper has overflow-hidden to prevent bleed
     // Field will compute square size = min(containerWidth, containerHeight) with 240px minimum
     // This ensures the field always fits inside available space, including rotation
   },
-  controlsScrollView: {
-    flex: 1, // Takes remaining space after field and playback dock
+  fieldCanvasContainerShort: {
+    // Constraint for short viewports (mobile landscape): field never exceeds 60% of viewport height
+    // This ensures controls remain reachable without field dominating the screen
+    maxHeight: '60dvh', // Only applies on web when windowHeight < 600px
+  },
+  controlsContainer: {
+    width: '100%',
     backgroundColor: '#f5f5f5',
     borderTopWidth: 1,
     borderTopColor: '#ddd',
-  },
-  controlsScrollContent: {
     padding: 20,
     paddingBottom: 40,
   },
